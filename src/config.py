@@ -22,9 +22,13 @@ class Config:
     MODEL_NAME = "facebook/sam3"  # HuggingFace'teki model adı
 
     # ---- Dataset Ayarları ----
-    DATA_DIR = "data/"                      # Ham veri klasörü
-    TRAIN_ANNOTATIONS = "data/train.jsonl"  # Eğitim annotation dosyası
-    VAL_ANNOTATIONS = "data/val.jsonl"      # Validation annotation dosyası
+    # NOT: Kaggle versiyonu numpy (.npy) formatında
+    # Görseller: (512, 512, 3) uint8 | Mask'lar: (512, 512, 19) uint8
+    DATA_DIR = "data/dacl10k/"                             # DACL10K ana klasörü
+    TRAIN_MASKS = "data/dacl10k/annotations/train/"        # Eğitim mask'ları (.npy, 512x512x19)
+    VAL_MASKS = "data/dacl10k/annotations/validation/"     # Validation mask'ları (.npy)
+    TRAIN_IMAGES = "data/dacl10k/images/train/"            # Eğitim görselleri (.npy, 512x512x3)
+    VAL_IMAGES = "data/dacl10k/images/validation/"         # Validation görselleri (.npy)
 
     # ---- Eğitim Ayarları ----
     BATCH_SIZE = 2         # Bir seferde kaç görsel işleneceği
