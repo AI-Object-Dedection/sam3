@@ -1,0 +1,24 @@
+# Gerekli Python paketleri
+# Kurmak için: pip install -r requirements.txt
+
+# PyTorch — derin öğrenme framework'ü
+torch
+torchvision
+
+# HuggingFace Transformers — SAM3 modeli için
+transformers
+
+# PEFT — LoRA fine-tuning için
+peft
+
+# Görüntü işleme
+Pillow
+
+# Sayısal hesaplamalar
+numpy
+
+# Görselleştirme
+matplotlib
+
+# İlerleme çubuğu (eğitim sırasında kullanılabilir)
+tqdm
