@@ -8,9 +8,23 @@ Köprü hasarlarını içeren ~9.920 görsellik bir veri setidir.
 19 farklı sınıf vardır: çatlak, pas, dökülme gibi hasar türleri
 ve köprü bileşenleri (drenaj, mesnet vb.).
 
-Veri formatı (datasetninja.com versiyonu):
+Veri formatı (orijinal LabelMe formatı):
 - Görseller: .jpg dosyaları (değişken boyut, RGB)
-- Annotationlar: .json dosyaları (Supervisely formatı, polygon şekilleri)
+- Annotationlar: .json dosyaları (LabelMe formatı, polygon şekilleri)
+
+JSON annotation yapısı:
+    {
+        "imageName": "dacl10k_v2_train_0001.jpg",
+        "imageWidth": 1600,
+        "imageHeight": 1200,
+        "shapes": [
+            {
+                "label": "Crack",
+                "points": [[x1,y1], [x2,y2], ...],
+                "shape_type": "polygon"
+            }
+        ]
+    }
 
 Bu dosyanın görevi:
 Görselleri ve JSON annotationları okuyup, polygon koordinatlarından
@@ -90,17 +104,18 @@ def _polygon_to_mask_channel(points, height, width):
 
 def _json_annotation_to_mask(json_yolu, height, width):
     """
-    Supervisely formatındaki JSON annotation dosyasından 19 kanallı mask oluşturur.
+    LabelMe formatındaki JSON annotation dosyasından 19 kanallı mask oluşturur.
 
-    Supervisely formatı:
+    LabelMe formatı:
         {
-            "size": {"height": ..., "width": ...},
-            "objects": [
+            "imageName": "dacl10k_v2_train_0001.jpg",
+            "imageWidth": 1600,
+            "imageHeight": 1200,
+            "shapes": [
                 {
-                    "classTitle": "Crack",
-                    "points": {
-                        "exterior": [[x1,y1], [x2,y2], ...]
-                    }
+                    "label": "Crack",
+                    "points": [[x1,y1], [x2,y2], ...],
+                    "shape_type": "polygon"
                 }
             ]
         }
@@ -119,24 +134,24 @@ def _json_annotation_to_mask(json_yolu, height, width):
     # 19 kanallı boş mask (başlangıçta hepsi 0)
     mask = np.zeros((height, width, NUM_CLASSES), dtype=np.uint8)
 
-    # Her annotated nesneyi işle
-    for nesne in annotation.get("objects", []):
-        sinif_adi = nesne.get("classTitle", "")
+    # Her shape'i (polygon) işle
+    for sekil in annotation.get("shapes", []):
+        sinif_adi = sekil.get("label", "")
 
         # Tanınan bir sınıf değilse atla
         if sinif_adi not in DACL10K_CLASSES:
             continue
 
         sinif_idx = DACL10K_CLASSES.index(sinif_adi)
-        dis_noktalar = nesne.get("points", {}).get("exterior", [])
+        noktalar = sekil.get("points", [])
 
-        if len(dis_noktalar) < 3:
+        if len(noktalar) < 3:
             continue
 
-        # Bu nesnenin maskini oluştur ve ilgili kanala OR ile ekle
-        # (aynı sınıftan birden fazla nesne olabilir)
-        nesne_maski = _polygon_to_mask_channel(dis_noktalar, height, width)
-        mask[:, :, sinif_idx] = np.maximum(mask[:, :, sinif_idx], nesne_maski)
+        # Bu polygon'un maskini oluştur ve ilgili kanala OR ile ekle
+        # (aynı sınıftan birden fazla polygon olabilir)
+        polygon_maski = _polygon_to_mask_channel(noktalar, height, width)
+        mask[:, :, sinif_idx] = np.maximum(mask[:, :, sinif_idx], polygon_maski)
 
     return mask
 

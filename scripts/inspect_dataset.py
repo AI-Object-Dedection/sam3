@@ -67,8 +67,8 @@ def _sinif_dagilimi_hesapla(annotations_dir, json_dosyalar):
         json_yolu = os.path.join(annotations_dir, json_dosyasi)
         with open(json_yolu, "r", encoding="utf-8") as f:
             ann = json.load(f)
-        for nesne in ann.get("objects", []):
-            sinif_adi = nesne.get("classTitle", "")
+        for sekil in ann.get("shapes", []):
+            sinif_adi = sekil.get("label", "")
             if sinif_adi in DACL10K_CLASSES:
                 sinif_sayilari[DACL10K_CLASSES.index(sinif_adi)] += 1
     return sinif_sayilari
