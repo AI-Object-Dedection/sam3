@@ -1,151 +1,245 @@
 """
 dataset.py — DACL10K Veri Seti Okuyucu
 
-Bu dosya DACL10K veri setini Python icinde kullanilabilir hale getirir.
+Bu dosya DACL10K veri setini Python içinde kullanılabilir hale getirir.
 
 DACL10K nedir?
-Kopru hasarlarini iceren ~10.000 gorsellik bir veri setidir.
-19 farkli sinif vardir: catlak, pas, dokulme gibi hasar turleri
-ve kopru bilesenleri (drenaj, mesnet vb.).
+Köprü hasarlarını içeren ~9.920 görsellik bir veri setidir.
+19 farklı sınıf vardır: çatlak, pas, dökülme gibi hasar türleri
+ve köprü bileşenleri (drenaj, mesnet vb.).
 
-Veri formati (Kaggle versiyonu):
-- Gorseller: .npy dosyalari (512, 512, 3) uint8 — RGB gorseller
-- Mask'lar: .npy dosyalari (512, 512, 19) uint8 — her kanal bir sinif
+Veri formatı (datasetninja.com versiyonu):
+- Görseller: .jpg dosyaları (değişken boyut, RGB)
+- Annotationlar: .json dosyaları (Supervisely formatı, polygon şekilleri)
 
-Bu dosyanin gorevi:
-Gorselleri ve maskeleri okuyup, modelin kullanabilecegi formata cevirmek.
+Bu dosyanın görevi:
+Görselleri ve JSON annotationları okuyup, polygon koordinatlarından
+mask oluşturarak modelin kullanabileceği formata çevirmek.
+
+Beklenen klasör yapısı:
+    data/dacl10k/
+    ├── images/
+    │   ├── train/       ← .jpg görseller
+    │   └── validation/  ← .jpg görseller
+    └── annotations/
+        ├── train/       ← .json annotation dosyaları
+        └── validation/  ← .json annotation dosyaları
 """
 
+import json
 import os
 
 import numpy as np
 import torch
+from PIL import Image, ImageDraw
 from torch.utils.data import Dataset
 
-# DACL10K'deki 19 sinif (mask kanallarinin sirasi)
-# 13 hasar turu + 6 kopru bileseni
-# Not: Sinif adlari DACL10K'nin resmi kisaltmalaridir
+# DACL10K'deki 19 sınıf (mask kanallarının sırası)
+# 13 hasar türü + 6 köprü bileşeni
 DACL10K_CLASSES = [
-    # Beton hasarlari
-    "Crack",            # Catlak
-    "ACrack",           # Timsah catlagi (Alligator Crack)
-    "Spalling",         # Dokulme
-    "Efflorescence",    # Tuz ciceklenmesi
-    "ExposedRebars",    # Aciga cikmis donati
-    "Cavity",           # Bosluk
-    "Restformwork",     # Kalip izi
-    "Rockpocket",       # Tas cep
-    "Hollowareas",      # Ici bos alanlar
+    # Beton hasarları
+    "Crack",            # Çatlak
+    "ACrack",           # Timsah çatlağı (Alligator Crack)
+    "Spalling",         # Dökülme
+    "Efflorescence",    # Tuz çiçeklenmesi
+    "ExposedRebars",    # Açığa çıkmış donatı
+    "Cavity",           # Boşluk
+    "Restformwork",     # Kalıp izi
+    "Rockpocket",       # Taş cep
+    "Hollowareas",      # İçi boş alanlar
     # Genel hasarlar
     "Rust",             # Pas
-    "Weathering",       # Asinma
+    "Weathering",       # Aşınma
     "Graffiti",         # Grafiti
     "Wetspot",          # Islak leke
-    # Kopru bilesenleri
+    # Köprü bileşenleri
     "Bearing",          # Mesnet
     "Drainage",         # Drenaj
-    "EJoint",           # Genlesme derzi (Expansion Joint)
-    "JTape",            # Derz bandi (Joint Tape)
+    "EJoint",           # Genleşme derzi (Expansion Joint)
+    "JTape",            # Derz bandı (Joint Tape)
     "PEquipment",       # Koruyucu ekipman (Protective Equipment)
     "WConccor",         # Beton korozyonu (Washouts/Concrete Corrosion)
 ]
 
-# Sinif sayisi
+# Sınıf sayısı
 NUM_CLASSES = len(DACL10K_CLASSES)  # 19
+
+
+def _polygon_to_mask_channel(points, height, width):
+    """
+    Tek bir polygon'dan binary mask oluşturur.
+
+    PIL kütüphanesi kullanarak polygon'un içini 1 ile doldurur.
+
+    Args:
+        points: Polygon köşe noktaları [[x1,y1], [x2,y2], ...]
+        height:  Mask yüksekliği (piksel)
+        width:   Mask genişliği (piksel)
+
+    Returns:
+        numpy array: (height, width) — 0/1 binary mask
+    """
+    kanal = Image.new("L", (width, height), 0)
+    cizici = ImageDraw.Draw(kanal)
+    # PIL polygon için (x, y) tuple listesi bekliyor
+    nokta_listesi = [(int(p[0]), int(p[1])) for p in points]
+    if len(nokta_listesi) >= 3:
+        cizici.polygon(nokta_listesi, fill=1)
+    return np.array(kanal, dtype=np.uint8)
+
+
+def _json_annotation_to_mask(json_yolu, height, width):
+    """
+    Supervisely formatındaki JSON annotation dosyasından 19 kanallı mask oluşturur.
+
+    Supervisely formatı:
+        {
+            "size": {"height": ..., "width": ...},
+            "objects": [
+                {
+                    "classTitle": "Crack",
+                    "points": {
+                        "exterior": [[x1,y1], [x2,y2], ...]
+                    }
+                }
+            ]
+        }
+
+    Args:
+        json_yolu: JSON dosyasının tam yolu
+        height:    Görselin yüksekliği
+        width:     Görselin genişliği
+
+    Returns:
+        numpy array: (height, width, 19) — her kanal bir sınıf
+    """
+    with open(json_yolu, "r", encoding="utf-8") as f:
+        annotation = json.load(f)
+
+    # 19 kanallı boş mask (başlangıçta hepsi 0)
+    mask = np.zeros((height, width, NUM_CLASSES), dtype=np.uint8)
+
+    # Her annotated nesneyi işle
+    for nesne in annotation.get("objects", []):
+        sinif_adi = nesne.get("classTitle", "")
+
+        # Tanınan bir sınıf değilse atla
+        if sinif_adi not in DACL10K_CLASSES:
+            continue
+
+        sinif_idx = DACL10K_CLASSES.index(sinif_adi)
+        dis_noktalar = nesne.get("points", {}).get("exterior", [])
+
+        if len(dis_noktalar) < 3:
+            continue
+
+        # Bu nesnenin maskini oluştur ve ilgili kanala OR ile ekle
+        # (aynı sınıftan birden fazla nesne olabilir)
+        nesne_maski = _polygon_to_mask_channel(dis_noktalar, height, width)
+        mask[:, :, sinif_idx] = np.maximum(mask[:, :, sinif_idx], nesne_maski)
+
+    return mask
 
 
 class DACL10KDataset(Dataset):
     """
-    DACL10K veri seti icin PyTorch Dataset sinifi.
+    DACL10K veri seti için PyTorch Dataset sınıfı.
 
-    Kaggle versiyonunda gorseller ve mask'lar .npy dosyalari olarak saklanir.
-    Her gorsel 512x512x3 (RGB), her mask 512x512x19 (sinif basina binary mask).
+    Datasetninja.com versiyonunda görseller .jpg, annotationlar .json
+    (Supervisely formatı, polygon şekilleri) olarak saklanır.
 
-    Bu sinif:
-    1. Klasordeki .npy dosya listesini okur
-    2. Her veri noktasi icin: gorsel + mask dondurur
+    Bu sınıf:
+    1. Klasördeki .jpg dosya listesini okur
+    2. Her veri noktası için: görsel + JSON'dan oluşturulmuş mask döndürür
     """
 
-    def __init__(self, images_dir, masks_dir, processor=None):
+    def __init__(self, images_dir, annotations_dir, processor=None):
         """
         Args:
-            images_dir: Gorsel .npy dosyalarinin bulundugu klasor
-                        (orn: "data/dacl10k/images/train/")
-            masks_dir:  Mask .npy dosyalarinin bulundugu klasor
-                        (orn: "data/dacl10k/annotations/train/")
-            processor:  SAM3 Processor (gorseli modele uygun formata cevirir)
+            images_dir:       Görsel .jpg dosyalarının bulunduğu klasör
+                              (ör: "data/dacl10k/images/train/")
+            annotations_dir:  JSON annotation dosyalarının bulunduğu klasör
+                              (ör: "data/dacl10k/annotations/train/")
+            processor:        SAM3 Processor (görseli modele uygun formata çevirir)
         """
         self.images_dir = images_dir
-        self.masks_dir = masks_dir
+        self.annotations_dir = annotations_dir
         self.processor = processor
 
-        # .npy dosya listesini olustur (sirali)
-        self.file_list = self._build_file_list()
+        # .jpg dosya listesini oluştur (sıralı)
+        self.dosya_listesi = self._build_file_list()
 
-        print(f"[dataset] {len(self.file_list)} gorsel yuklendi.")
+        print(f"[dataset] {len(self.dosya_listesi)} görsel yüklendi.")
 
     def _build_file_list(self):
         """
-        Gorsel klasorundeki .npy dosyalarini listeler.
+        Görsel klasöründeki .jpg dosyalarını listeler.
 
-        Annotation klasorunde de ayni isimli dosyalarin oldugunu varsayar.
-        Ornegin: images/train/dacl10k_v2_train_0000.npy
-                 annotations/train/dacl10k_v2_train_0000.npy
+        Annotation klasöründe de aynı isimli .json dosyaların olduğunu varsayar.
+        Örneğin: images/train/dacl10k_v2_train_0001.jpg
+                 annotations/train/dacl10k_v2_train_0001.json
 
         Returns:
-            list: Sirali dosya adlari listesi
+            list: Sıralı dosya adları listesi (uzantısız, ör: "dacl10k_v2_train_0001")
         """
-        files = sorted([
-            f for f in os.listdir(self.images_dir)
-            if f.endswith(".npy")
+        jpg_dosyalari = sorted([
+            os.path.splitext(f)[0]  # Uzantıyı çıkar: "resim.jpg" → "resim"
+            for f in os.listdir(self.images_dir)
+            if f.lower().endswith(".jpg") or f.lower().endswith(".jpeg")
         ])
-        return files
+        return jpg_dosyalari
 
     def __len__(self):
-        """Veri setindeki toplam gorsel sayisi."""
-        return len(self.file_list)
+        """Veri setindeki toplam görsel sayısı."""
+        return len(self.dosya_listesi)
 
     def __getitem__(self, idx):
         """
-        Tek bir veri noktasi dondurur.
+        Tek bir veri noktası döndürür.
 
         Args:
-            idx: Istenilen gorselin sira numarasi
+            idx: İstenen görselin sıra numarası
 
         Returns:
-            dict: Gorseli ve mask bilgisini iceren sozluk
+            dict: Görseli ve mask bilgisini içeren sözlük
         """
-        filename = self.file_list[idx]
+        temel_ad = self.dosya_listesi[idx]
 
-        # Gorseli oku — (512, 512, 3) uint8
-        image_path = os.path.join(self.images_dir, filename)
-        image = np.load(image_path)
+        # Görseli oku (.jpg → PIL → numpy)
+        gorsel_yolu = os.path.join(self.images_dir, temel_ad + ".jpg")
+        if not os.path.exists(gorsel_yolu):
+            gorsel_yolu = os.path.join(self.images_dir, temel_ad + ".jpeg")
+        gorsel = np.array(Image.open(gorsel_yolu).convert("RGB"), dtype=np.uint8)
+        height, width = gorsel.shape[:2]
 
-        # Mask'i oku — (512, 512, 19) uint8
-        mask_path = os.path.join(self.masks_dir, filename)
-        mask = np.load(mask_path)
+        # JSON annotation'dan mask oluştur — (height, width, 19)
+        json_yolu = os.path.join(self.annotations_dir, temel_ad + ".json")
+        if os.path.exists(json_yolu):
+            mask = _json_annotation_to_mask(json_yolu, height, width)
+        else:
+            # JSON bulunamazsa boş mask döndür
+            mask = np.zeros((height, width, NUM_CLASSES), dtype=np.uint8)
 
-        # Tum siniflardan tek bir binary mask olustur (herhangi bir hasar var mi?)
-        # (512, 512, 19) -> (512, 512) — herhangi bir kanalda 1 varsa 1
+        # Tüm sınıflardan tek binary mask oluştur (herhangi bir hasar var mı?)
+        # (height, width, 19) → (height, width) — herhangi bir kanalda 1 varsa 1
         binary_mask = mask.any(axis=2).astype(np.float32)
 
-        # Eger processor varsa, gorseli modele uygun formata cevir
+        # Eğer processor varsa, görseli modele uygun formata çevir
         if self.processor is not None:
-            # PIL Image'a cevir (processor bunu bekliyor)
-            from PIL import Image
-            pil_image = Image.fromarray(image)
-
-            inputs = self.processor(images=pil_image, return_tensors="pt")
-            # Batch boyutunu kaldir (processor [1, C, H, W] verir, biz [C, H, W] istiyoruz)
+            pil_gorsel = Image.fromarray(gorsel)
+            inputs = self.processor(images=pil_gorsel, return_tensors="pt")
+            # Batch boyutunu kaldır (processor [1, C, H, W] verir, biz [C, H, W] istiyoruz)
             inputs = {k: v.squeeze(0) for k, v in inputs.items()}
             inputs["ground_truth_mask"] = torch.tensor(binary_mask)
-            inputs["multi_class_mask"] = torch.tensor(mask.astype(np.float32)).permute(2, 0, 1)  # (19, 512, 512)
+            inputs["multi_class_mask"] = torch.tensor(
+                mask.astype(np.float32)
+            ).permute(2, 0, 1)  # (19, height, width)
             return inputs
 
-        # Processor yoksa ham veriyi dondur
+        # Processor yoksa ham veriyi döndür
         return {
-            "image": image,                # (512, 512, 3) numpy
-            "mask": binary_mask,           # (512, 512) numpy — tek binary mask
-            "multi_class_mask": mask,      # (512, 512, 19) numpy — sinif basina mask
-            "filename": filename,
+            "image": gorsel,               # (height, width, 3) numpy — RGB
+            "mask": binary_mask,           # (height, width) numpy — tek binary mask
+            "multi_class_mask": mask,      # (height, width, 19) numpy — sınıf başına mask
+            "filename": temel_ad,
         }

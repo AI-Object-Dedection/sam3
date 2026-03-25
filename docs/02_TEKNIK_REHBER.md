@@ -119,23 +119,30 @@ model = Sam3Model.from_pretrained("facebook/sam3")
 
 ### Annotation (İşaretleme) Formatı
 
+Datasetninja.com versiyonu **Supervisely formatında** JSON dosyaları kullanır.
 Her görsel için ayrı bir `.json` dosyası var. Yapısı:
 
 ```json
 {
-  "imageName": "dacl10k_v2_0001.jpg",
-  "imageWidth": 1280,
-  "imageHeight": 960,
-  "shapes": [
+  "description": "",
+  "size": {
+    "height": 960,
+    "width": 1280
+  },
+  "objects": [
     {
-      "label": "Crack",
-      "points": [[100, 200], [150, 250], [120, 300]],
-      "shape_type": "polygon"
+      "classTitle": "Crack",
+      "points": {
+        "exterior": [[100, 200], [150, 250], [120, 300]],
+        "interior": []
+      }
     },
     {
-      "label": "Rust",
-      "points": [[400, 100], [500, 100], [500, 200], [400, 200]],
-      "shape_type": "polygon"
+      "classTitle": "Rust",
+      "points": {
+        "exterior": [[400, 100], [500, 100], [500, 200], [400, 200]],
+        "interior": []
+      }
     }
   ]
 }
@@ -147,17 +154,30 @@ Her görsel için ayrı bir `.json` dosyası var. Yapısı:
 
 ```
 data/dacl10k/
-├── annotations/
-│   ├── train/           # 6.935 adet .json dosyası
-│   ├── validation/      # 975 adet .json dosyası
-│   ├── testdev/
-│   └── testchallenge/
-└── images/
-    ├── train/           # 6.935 adet .jpg dosyası
-    ├── validation/      # 975 adet .jpg dosyası
-    ├── testdev/
-    └── testchallenge/
+├── images/
+│   ├── train/           # 6.935 adet .jpg dosyası
+│   └── validation/      # 975 adet .jpg dosyası
+└── annotations/
+    ├── train/           # 6.935 adet .json dosyası
+    └── validation/      # 975 adet .json dosyası
 ```
+
+### Veri Setini Kurma
+
+Datasetninja.com'dan indirmek için:
+
+```bash
+# 1. Kurulum aracını yükle (sadece bir kez)
+pip install dataset-tools
+
+# 2. İndir ve düzenle
+python scripts/setup_dataset.py
+```
+
+`setup_dataset.py` scripti:
+1. Datasetninja'dan ~4-5 GB veri indirir
+2. Dosyaları doğru klasör yapısına taşır
+3. Annotation dosya adlarını düzenler (`resim.jpg.json` → `resim.json`)
 
 ### İlgili Dosyalar
 

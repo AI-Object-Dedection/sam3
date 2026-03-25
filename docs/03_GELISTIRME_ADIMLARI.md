@@ -49,30 +49,30 @@ Her faz için: ne yapılacak, hangi dosyalar değişecek, nasıl test edilecek.
 - [x] `python scripts/inspect_dataset.py` çalıştırarak veriyi doğrula
 - [x] Dataset'ten örnek görsel + mask çıktısını görsel olarak kontrol et (`visualize_sample.py`)
 
-### Önemli Keşif: Veri Formatı
+### Veri Formatı: Datasetninja.com (Supervisely)
 
-Kaggle versiyonunda veri **numpy .npy** formatında (LabelMe JSON değil):
-- Görseller: `(512, 512, 3)` uint8 — 512x512 RGB
-- Mask'lar: `(512, 512, 19)` uint8 — her kanal bir sınıf, hazır binary mask
-- Polygon'dan mask oluşturmaya gerek yok, mask'lar hazır
+Datasetninja.com versiyonu kullanılıyor:
+- Görseller: `.jpg` dosyaları (değişken boyut, RGB)
+- Annotationlar: `.json` dosyaları (Supervisely formatı, polygon şekilleri)
+- Mask'lar runtime'da JSON polygon'lardan oluşturuluyor (PIL.ImageDraw ile)
 
 ### Değişen Dosyalar
 
 | Dosya | Değişiklik |
 |-------|-----------|
-| `src/config.py` | Numpy formatına uygun yol tanımları ✅ |
-| `src/dataset.py` | JSON → Numpy .npy okuma ✅ |
-| `scripts/inspect_dataset.py` | Numpy bazlı inceleme ✅ |
-| `scripts/visualize_sample.py` | Yeni: görselleştirme scripti ✅ |
+| `src/config.py` | JSON+JPG formatına uygun yol tanımları ✅ |
+| `src/dataset.py` | Supervisely JSON okuma + polygon→mask dönüşümü ✅ |
+| `scripts/inspect_dataset.py` | JSON+JPG bazlı inceleme ✅ |
+| `scripts/setup_dataset.py` | Yeni: datasetninja indirme ve kurulum scripti ✅ |
 
 ### Doğrulama Kontrol Listesi
 
 ```
+✅ python scripts/setup_dataset.py ile veri seti kuruldu
 ✅ python scripts/inspect_dataset.py hatasız çalışıyor
 ✅ Annotation sayısı doğru (train: 6935, val: 975)
 ✅ 19 sınıfın hepsi veride mevcut
-✅ Mask'lar doğru formatta (512x512x19, binary)
-✅ Görsel + mask overlay görselleştirmesi yapıldı (outputs/visualizations/)
+✅ Polygon → mask dönüşümü doğru çalışıyor
 ```
 
 ---

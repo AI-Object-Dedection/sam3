@@ -127,11 +127,12 @@ Detaylı açıklamalar için → `docs/02_TEKNIK_REHBER.md`
 
 ### DACL10K Hızlı Bilgi
 
-- Format: Numpy .npy (Kaggle versiyonu)
-- Görseller: `(512, 512, 3)` uint8 | Mask'lar: `(512, 512, 19)` uint8
+- Format: Supervisely JSON + JPG (datasetninja.com versiyonu)
+- Görseller: `.jpg` (değişken boyut, RGB) | Annotationlar: `.json` (polygon şekilleri)
+- Mask'lar runtime'da `_json_annotation_to_mask()` ile polygon'lardan oluşturulur
 - 19 sınıf (13 hasar + 6 bileşen), her kanal bir sınıf
 - Sınıf adları kısaltmalı: `ACrack`, `EJoint`, `PEquipment`, `WConccor` vb.
-- Veri seti junction ile bağlı: `data/dacl10k/` → Kaggle cache
+- Kurulum: `pip install dataset-tools` → `python scripts/setup_dataset.py`
 
 ### SAM3 Hızlı Bilgi
 
