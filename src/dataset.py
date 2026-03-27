@@ -93,16 +93,16 @@ def _polygon_to_mask_channel(points, height, width):
     Returns:
         numpy array: (height, width) — 0/1 binary mask
     """
-    kanal = Image.new("L", (width, height), 0)
-    cizici = ImageDraw.Draw(kanal)
+    channel = Image.new("L", (width, height), 0)
+    drawer = ImageDraw.Draw(channel)
     # PIL polygon için (x, y) tuple listesi bekliyor
-    nokta_listesi = [(int(p[0]), int(p[1])) for p in points]
-    if len(nokta_listesi) >= 3:
-        cizici.polygon(nokta_listesi, fill=1)
-    return np.array(kanal, dtype=np.uint8)
+    point_list = [(int(p[0]), int(p[1])) for p in points]
+    if len(point_list) >= 3:
+        drawer.polygon(point_list, fill=1)
+    return np.array(channel, dtype=np.uint8)
 
 
-def _json_annotation_to_mask(json_yolu, height, width):
+def _json_annotation_to_mask(json_path, height, width):
     """
     LabelMe formatındaki JSON annotation dosyasından 19 kanallı mask oluşturur.
 
@@ -121,37 +121,37 @@ def _json_annotation_to_mask(json_yolu, height, width):
         }
 
     Args:
-        json_yolu: JSON dosyasının tam yolu
+        json_path: JSON dosyasının tam yolu
         height:    Görselin yüksekliği
         width:     Görselin genişliği
 
     Returns:
         numpy array: (height, width, 19) — her kanal bir sınıf
     """
-    with open(json_yolu, "r", encoding="utf-8") as f:
+    with open(json_path, "r", encoding="utf-8") as f:
         annotation = json.load(f)
 
     # 19 kanallı boş mask (başlangıçta hepsi 0)
     mask = np.zeros((height, width, NUM_CLASSES), dtype=np.uint8)
 
     # Her shape'i (polygon) işle
-    for sekil in annotation.get("shapes", []):
-        sinif_adi = sekil.get("label", "")
+    for shape in annotation.get("shapes", []):
+        class_name = shape.get("label", "")
 
         # Tanınan bir sınıf değilse atla
-        if sinif_adi not in DACL10K_CLASSES:
+        if class_name not in DACL10K_CLASSES:
             continue
 
-        sinif_idx = DACL10K_CLASSES.index(sinif_adi)
-        noktalar = sekil.get("points", [])
+        class_idx = DACL10K_CLASSES.index(class_name)
+        points = shape.get("points", [])
 
-        if len(noktalar) < 3:
+        if len(points) < 3:
             continue
 
         # Bu polygon'un maskini oluştur ve ilgili kanala OR ile ekle
         # (aynı sınıftan birden fazla polygon olabilir)
-        polygon_maski = _polygon_to_mask_channel(noktalar, height, width)
-        mask[:, :, sinif_idx] = np.maximum(mask[:, :, sinif_idx], polygon_maski)
+        polygon_mask = _polygon_to_mask_channel(points, height, width)
+        mask[:, :, class_idx] = np.maximum(mask[:, :, class_idx], polygon_mask)
 
     return mask
 
@@ -182,9 +182,9 @@ class DACL10KDataset(Dataset):
         self.processor = processor
 
         # .jpg dosya listesini oluştur (sıralı)
-        self.dosya_listesi = self._build_file_list()
+        self.file_list = self._build_file_list()
 
-        print(f"[dataset] {len(self.dosya_listesi)} görsel yüklendi.")
+        print(f"[dataset] {len(self.file_list)} görsel yüklendi.")
 
     def _build_file_list(self):
         """
@@ -197,16 +197,16 @@ class DACL10KDataset(Dataset):
         Returns:
             list: Sıralı dosya adları listesi (uzantısız, ör: "dacl10k_v2_train_0001")
         """
-        jpg_dosyalari = sorted([
+        jpg_files = sorted([
             os.path.splitext(f)[0]  # Uzantıyı çıkar: "resim.jpg" → "resim"
             for f in os.listdir(self.images_dir)
             if f.lower().endswith(".jpg") or f.lower().endswith(".jpeg")
         ])
-        return jpg_dosyalari
+        return jpg_files
 
     def __len__(self):
         """Veri setindeki toplam görsel sayısı."""
-        return len(self.dosya_listesi)
+        return len(self.file_list)
 
     def __getitem__(self, idx):
         """
@@ -218,19 +218,19 @@ class DACL10KDataset(Dataset):
         Returns:
             dict: Görseli ve mask bilgisini içeren sözlük
         """
-        temel_ad = self.dosya_listesi[idx]
+        base_name = self.file_list[idx]
 
         # Görseli oku (.jpg → PIL → numpy)
-        gorsel_yolu = os.path.join(self.images_dir, temel_ad + ".jpg")
-        if not os.path.exists(gorsel_yolu):
-            gorsel_yolu = os.path.join(self.images_dir, temel_ad + ".jpeg")
-        gorsel = np.array(Image.open(gorsel_yolu).convert("RGB"), dtype=np.uint8)
-        height, width = gorsel.shape[:2]
+        image_path = os.path.join(self.images_dir, base_name + ".jpg")
+        if not os.path.exists(image_path):
+            image_path = os.path.join(self.images_dir, base_name + ".jpeg")
+        image = np.array(Image.open(image_path).convert("RGB"), dtype=np.uint8)
+        height, width = image.shape[:2]
 
         # JSON annotation'dan mask oluştur — (height, width, 19)
-        json_yolu = os.path.join(self.annotations_dir, temel_ad + ".json")
-        if os.path.exists(json_yolu):
-            mask = _json_annotation_to_mask(json_yolu, height, width)
+        json_path = os.path.join(self.annotations_dir, base_name + ".json")
+        if os.path.exists(json_path):
+            mask = _json_annotation_to_mask(json_path, height, width)
         else:
             # JSON bulunamazsa boş mask döndür
             mask = np.zeros((height, width, NUM_CLASSES), dtype=np.uint8)
@@ -241,8 +241,8 @@ class DACL10KDataset(Dataset):
 
         # Eğer processor varsa, görseli modele uygun formata çevir
         if self.processor is not None:
-            pil_gorsel = Image.fromarray(gorsel)
-            inputs = self.processor(images=pil_gorsel, return_tensors="pt")
+            pil_image = Image.fromarray(image)
+            inputs = self.processor(images=pil_image, return_tensors="pt")
             # Batch boyutunu kaldır (processor [1, C, H, W] verir, biz [C, H, W] istiyoruz)
             inputs = {k: v.squeeze(0) for k, v in inputs.items()}
             inputs["ground_truth_mask"] = torch.tensor(binary_mask)
@@ -253,8 +253,8 @@ class DACL10KDataset(Dataset):
 
         # Processor yoksa ham veriyi döndür
         return {
-            "image": gorsel,               # (height, width, 3) numpy — RGB
-            "mask": binary_mask,           # (height, width) numpy — tek binary mask
-            "multi_class_mask": mask,      # (height, width, 19) numpy — sınıf başına mask
-            "filename": temel_ad,
+            "image": image,               # (height, width, 3) numpy — RGB
+            "mask": binary_mask,          # (height, width) numpy — tek binary mask
+            "multi_class_mask": mask,     # (height, width, 19) numpy — sınıf başına mask
+            "filename": base_name,
         }
