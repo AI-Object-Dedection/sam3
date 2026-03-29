@@ -8,6 +8,9 @@ torchvision
 # HuggingFace Transformers — SAM3 modeli için
 transformers
 
+# HuggingFace Hub — model indirme ve login için
+huggingface_hub
+
 # PEFT — LoRA fine-tuning için
 peft
 

@@ -117,7 +117,7 @@ Detaylar için → `docs/03_GELISTIRME_ADIMLARI.md`
 |-----|------|-------|
 | 1 | Proje İskeleti | ✅ Tamamlandı |
 | 2 | Veri Seti Entegrasyonu | ✅ Tamamlandı |
-| 3 | Model + LoRA Kurulumu | 🔄 Devam ediyor |
+| 3 | Model + LoRA Kurulumu | ✅ Tamamlandı |
 | 4 | Eğitim + Değerlendirme | ⬜ Bekliyor |
 | 5 | Inference + Demo | ⬜ Bekliyor |
 

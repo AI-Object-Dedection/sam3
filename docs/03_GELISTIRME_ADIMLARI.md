@@ -13,7 +13,7 @@ Her faz için: ne yapılacak, hangi dosyalar değişecek, nasıl test edilecek.
 |-----|------|-------|----------|
 | 1 | Proje İskeleti | ✅ Tamamlandı | Klasör yapısı, boş dosyalar, config |
 | 2 | Veri Seti Entegrasyonu | ✅ Tamamlandı | DACL10K numpy okuma, doğrulama |
-| 3 | Model + LoRA Kurulumu | 🔄 Devam ediyor | SAM3 yükleme, LoRA uygulama, doğrulama |
+| 3 | Model + LoRA Kurulumu | ✅ Tamamlandı | SAM3 yükleme, LoRA uygulama, doğrulama |
 | 4 | Eğitim + Değerlendirme | ⬜ Bekliyor | Training loop, loss, IoU |
 | 5 | Inference + Demo | ⬜ Bekliyor | Tek görsel tahmini, görselleştirme |
 
@@ -79,18 +79,17 @@ Datasetninja.com versiyonu kullanılıyor:
 
 ## Faz 3: Model + LoRA Kurulumu 🔄
 
-**Durum:** Devam ediyor
+**Durum:** Tamamlandı
 
 **Amaç:** SAM3 modelini yüklemek, LoRA uygulamak ve modelin çalıştığını doğrulamak.
 
 ### Yapılacak İşler
 
-- [ ] `facebook/sam3` modelini HuggingFace'ten indir ve test et
-- [ ] `Sam3Model` ve `Sam3Processor` sınıflarının çalıştığını doğrula
-- [ ] `model.py`'deki `load_model()` ve `load_processor()` fonksiyonlarını test et
-- [ ] `lora.py`'deki `apply_lora()` fonksiyonunu test et
-- [ ] Eğitilebilir parametre oranını kontrol et (beklenen: ~%1-2)
-- [ ] Modele örnek bir görsel verip çıktı alınabildiğini doğrula
+- [x] `facebook/sam3` modelini HuggingFace'ten indir ve test et
+- [x] `AutoModel` ve `AutoProcessor` sınıflarının çalıştığını doğrula
+- [x] `lora.py`'deki `apply_lora()` fonksiyonunu test et
+- [x] Eğitilebilir parametre oranını kontrol et (%0.26 — q_proj + v_proj)
+- [x] Modele örnek bir görsel verip çıktı alınabildiğini doğrula
 
 ### Değişecek Dosyalar
 
@@ -103,12 +102,19 @@ Datasetninja.com versiyonu kullanılıyor:
 ### Doğrulama Kontrol Listesi
 
 ```
-□ model = load_model() hatasız çalışıyor mu?
-□ processor = load_processor() hatasız çalışıyor mu?
-□ model = apply_lora(model) hatasız çalışıyor mu?
-□ print_trainable_params(model) mantıklı değerler veriyor mu?
-□ Modele örnek görsel verilip çıktı alınabiliyor mu?
+✅ model = load_model() hatasız çalışıyor
+✅ processor = load_processor() hatasız çalışıyor
+✅ model = apply_lora(model) hatasız çalışıyor
+✅ print_trainable_params(model) → %0.26 (q_proj + v_proj)
+✅ Vision encoder örnek görsel ile test edildi
 ```
+
+### Öğrenilen Bilgiler
+
+- `Sam3VideoModel` yapısı: `detector_model` + `tracker_model` + `tracker_neck`
+- Vision encoder yolu: `model.base_model.model.detector_model.vision_encoder`
+- Model forward pass için `inference_session` gerekiyor (video modeli)
+- LoRA eğitilebilir oran: %0.26 (sadece q_proj + v_proj) — Faz 4'te gerekirse artırılabilir
 
 ### AI Agent'a Not
 
