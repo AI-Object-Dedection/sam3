@@ -1,0 +1,20 @@
+# Sanal ortam — binlerce dosya, Claude'un görmesine gerek yok
+venv/
+
+# Veri seti — büyük binary dosyalar, kod değil
+data/
+
+# Model ağırlıkları ve eğitim çıktıları
+checkpoints/
+outputs/
+
+# Python cache dosyaları
+__pycache__/
+*.pyc
+*.pyo
+
+# Ortam değişkenleri — gizli bilgiler içerebilir
+.env
+
+# Jupyter checkpoint klasörleri
+.ipynb_checkpoints/
