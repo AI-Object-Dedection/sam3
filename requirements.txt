@@ -11,6 +11,7 @@ transformers
 # HuggingFace Hub — model indirme ve login için
 huggingface_hub
 
+
 # .env dosyasını okumak için
 python-dotenv
 

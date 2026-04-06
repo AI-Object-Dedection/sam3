@@ -8,44 +8,28 @@ Köprü hasarlarını içeren ~9.920 görsellik bir veri setidir.
 19 farklı sınıf vardır: çatlak, pas, dökülme gibi hasar türleri
 ve köprü bileşenleri (drenaj, mesnet vb.).
 
-Veri formatı (orijinal LabelMe formatı):
-- Görseller: .jpg dosyaları (değişken boyut, RGB)
-- Annotationlar: .json dosyaları (LabelMe formatı, polygon şekilleri)
+Veri formatı (Kaggle / numpy versiyonu):
+- Görseller  : .npy dosyaları — (512, 512, 3) uint8 (RGB)
+- Annotationlar: .npy dosyaları — (512, 512, 19) uint8 (her kanal bir sınıf, 0/1)
 
-JSON annotation yapısı:
-    {
-        "imageName": "dacl10k_v2_train_0001.jpg",
-        "imageWidth": 1600,
-        "imageHeight": 1200,
-        "shapes": [
-            {
-                "label": "Crack",
-                "points": [[x1,y1], [x2,y2], ...],
-                "shape_type": "polygon"
-            }
-        ]
-    }
-
-Bu dosyanın görevi:
-Görselleri ve JSON annotationları okuyup, polygon koordinatlarından
-mask oluşturarak modelin kullanabileceği formata çevirmek.
-
-Beklenen klasör yapısı:
+Klasör yapısı:
     data/dacl10k/
     ├── images/
-    │   ├── train/       ← .jpg görseller
-    │   └── validation/  ← .jpg görseller
+    │   ├── train/       ← dacl10k_v2_train_XXXX.npy
+    │   └── validation/  ← dacl10k_v2_val_XXXX.npy
     └── annotations/
-        ├── train/       ← .json annotation dosyaları
-        └── validation/  ← .json annotation dosyaları
+        ├── train/       ← dacl10k_v2_train_XXXX.npy
+        └── validation/  ← dacl10k_v2_val_XXXX.npy
+
+Bu dosyanın görevi:
+.npy dosyalarını okuyarak modelin kullanabileceği formata çevirmek.
 """
 
-import json
 import os
 
 import numpy as np
 import torch
-from PIL import Image, ImageDraw
+from PIL import Image
 from torch.utils.data import Dataset
 
 # DACL10K'deki 19 sınıf (mask kanallarının sırası)
@@ -79,130 +63,81 @@ DACL10K_CLASSES = [
 NUM_CLASSES = len(DACL10K_CLASSES)  # 19
 
 
-def _polygon_to_mask_channel(points, height, width):
-    """
-    Tek bir polygon'dan binary mask oluşturur.
-
-    PIL kütüphanesi kullanarak polygon'un içini 1 ile doldurur.
-
-    Args:
-        points: Polygon köşe noktaları [[x1,y1], [x2,y2], ...]
-        height:  Mask yüksekliği (piksel)
-        width:   Mask genişliği (piksel)
-
-    Returns:
-        numpy array: (height, width) — 0/1 binary mask
-    """
-    channel = Image.new("L", (width, height), 0)
-    drawer = ImageDraw.Draw(channel)
-    # PIL polygon için (x, y) tuple listesi bekliyor
-    point_list = [(int(p[0]), int(p[1])) for p in points]
-    if len(point_list) >= 3:
-        drawer.polygon(point_list, fill=1)
-    return np.array(channel, dtype=np.uint8)
-
-
-def _json_annotation_to_mask(json_path, height, width):
-    """
-    LabelMe formatındaki JSON annotation dosyasından 19 kanallı mask oluşturur.
-
-    LabelMe formatı:
-        {
-            "imageName": "dacl10k_v2_train_0001.jpg",
-            "imageWidth": 1600,
-            "imageHeight": 1200,
-            "shapes": [
-                {
-                    "label": "Crack",
-                    "points": [[x1,y1], [x2,y2], ...],
-                    "shape_type": "polygon"
-                }
-            ]
-        }
-
-    Args:
-        json_path: JSON dosyasının tam yolu
-        height:    Görselin yüksekliği
-        width:     Görselin genişliği
-
-    Returns:
-        numpy array: (height, width, 19) — her kanal bir sınıf
-    """
-    with open(json_path, "r", encoding="utf-8") as f:
-        annotation = json.load(f)
-
-    # 19 kanallı boş mask (başlangıçta hepsi 0)
-    mask = np.zeros((height, width, NUM_CLASSES), dtype=np.uint8)
-
-    # Her shape'i (polygon) işle
-    for shape in annotation.get("shapes", []):
-        class_name = shape.get("label", "")
-
-        # Tanınan bir sınıf değilse atla
-        if class_name not in DACL10K_CLASSES:
-            continue
-
-        class_idx = DACL10K_CLASSES.index(class_name)
-        points = shape.get("points", [])
-
-        if len(points) < 3:
-            continue
-
-        # Bu polygon'un maskini oluştur ve ilgili kanala OR ile ekle
-        # (aynı sınıftan birden fazla polygon olabilir)
-        polygon_mask = _polygon_to_mask_channel(points, height, width)
-        mask[:, :, class_idx] = np.maximum(mask[:, :, class_idx], polygon_mask)
-
-    return mask
-
-
 class DACL10KDataset(Dataset):
     """
     DACL10K veri seti için PyTorch Dataset sınıfı.
 
-    Datasetninja.com versiyonunda görseller .jpg, annotationlar .json
-    (Supervisely formatı, polygon şekilleri) olarak saklanır.
+    Kaggle versiyonunda görseller ve maskler .npy formatında saklanır.
+    - Görsel: (512, 512, 3) uint8 — RGB
+    - Mask  : (512, 512, 19) uint8 — her kanal bir hasar sınıfı (0/1)
 
     Bu sınıf:
-    1. Klasördeki .jpg dosya listesini okur
-    2. Her veri noktası için: görsel + JSON'dan oluşturulmuş mask döndürür
+    1. Klasördeki .npy dosya listesini okur
+    2. Her veri noktası için: görsel + mask döndürür
+
+    Döndürülen veri formatı (processor varsa, SAM3 için):
+        pixel_values     : (3, 1008, 1008)  — görselin işlenmiş hali
+        input_ids        : (seq_len,)        — metin tokenları
+        attention_mask   : (seq_len,)        — metin attention maskı
+        ground_truth_mask: (288, 288)        — gerçek hasar maskı (0/1)
     """
 
-    def __init__(self, images_dir, annotations_dir, processor=None):
+    def __init__(self, images_dir, annotations_dir, processor=None, max_samples=None):
         """
         Args:
-            images_dir:       Görsel .jpg dosyalarının bulunduğu klasör
-                              (ör: "data/dacl10k/images/train/")
-            annotations_dir:  JSON annotation dosyalarının bulunduğu klasör
-                              (ör: "data/dacl10k/annotations/train/")
-            processor:        SAM3 Processor (görseli modele uygun formata çevirir)
+            images_dir:       Görsel .npy dosyalarının bulunduğu klasör
+            annotations_dir:  Mask .npy dosyalarının bulunduğu klasör
+            processor:        SAM3 Processor (görseli ve metni modele uygun formata çevirir)
+            max_samples:      Kaç görsel kullanılacak (None = hepsi, 100 = test için)
         """
         self.images_dir = images_dir
         self.annotations_dir = annotations_dir
         self.processor = processor
 
-        # .jpg dosya listesini oluştur (sıralı)
+        # .npy dosya listesini oluştur (sıralı)
         self.file_list = self._build_file_list()
 
-        print(f"[dataset] {len(self.file_list)} görsel yüklendi.")
+        # Sadece belirli sayıda örnek kullan (test için)
+        if max_samples is not None:
+            self.file_list = self.file_list[:max_samples]
+
+        # Metin tokenlarını bir kez hesapla — her örnek için aynı metin ("damage")
+        # NOT: Burada sadece string saklıyoruz, tokenization __getitem__'de değil
+        # başlangıçta yapılır ama sadece bir kez
+        self._input_ids = None
+        self._attention_mask = None
+
+        print(f"[dataset] {len(self.file_list)} gorsel yuklendi.")
+
+        if processor is not None:
+            from src.config import Config
+            text_inputs = processor.tokenizer(
+                Config.TEXT_PROMPT,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+            )
+            self._input_ids = text_inputs["input_ids"].squeeze(0)
+            self._attention_mask = text_inputs["attention_mask"].squeeze(0)
+            print("[dataset] Tokenizer hazir.")
 
     def _build_file_list(self):
         """
-        Görsel klasöründeki .jpg dosyalarını listeler.
+        Görsel klasöründeki .npy dosyalarını listeler.
 
-        Annotation klasöründe de aynı isimli .json dosyaların olduğunu varsayar.
-        Örneğin: images/train/dacl10k_v2_train_0001.jpg
-                 annotations/train/dacl10k_v2_train_0001.json
+        Görsel ve annotation dosyalarının aynı ada sahip olduğunu varsayar.
+        Örnek: images/train/dacl10k_v2_train_0001.npy
+               annotations/train/dacl10k_v2_train_0001.npy
 
         Returns:
-            list: Sıralı dosya adları listesi (uzantısız, ör: "dacl10k_v2_train_0001")
+            list: Sıralı dosya adları listesi (uzantısız)
         """
-        jpg_files = sorted([
-            os.path.splitext(f)[0]  # Uzantıyı çıkar: "resim.jpg" → "resim"
+        npy_files = sorted([
+            os.path.splitext(f)[0]  # Uzantıyı çıkar: "resim.npy" → "resim"
             for f in os.listdir(self.images_dir)
-            if f.lower().endswith(".jpg") or f.lower().endswith(".jpeg")
+            if f.lower().endswith(".npy")
         ])
-        return jpg_files
+        return npy_files
 
     def __len__(self):
         """Veri setindeki toplam görsel sayısı."""
@@ -220,41 +155,55 @@ class DACL10KDataset(Dataset):
         """
         base_name = self.file_list[idx]
 
-        # Görseli oku (.jpg → PIL → numpy)
-        image_path = os.path.join(self.images_dir, base_name + ".jpg")
-        if not os.path.exists(image_path):
-            image_path = os.path.join(self.images_dir, base_name + ".jpeg")
-        image = np.array(Image.open(image_path).convert("RGB"), dtype=np.uint8)
-        height, width = image.shape[:2]
+        # Görseli oku — (512, 512, 3) uint8
+        image_path = os.path.join(self.images_dir, base_name + ".npy")
+        image = np.load(image_path)  # (512, 512, 3)
 
-        # JSON annotation'dan mask oluştur — (height, width, 19)
-        json_path = os.path.join(self.annotations_dir, base_name + ".json")
-        if os.path.exists(json_path):
-            mask = _json_annotation_to_mask(json_path, height, width)
+        # Mask'ı oku — (512, 512, 19) uint8
+        mask_path = os.path.join(self.annotations_dir, base_name + ".npy")
+        if os.path.exists(mask_path):
+            mask = np.load(mask_path)  # (512, 512, 19)
         else:
-            # JSON bulunamazsa boş mask döndür
-            mask = np.zeros((height, width, NUM_CLASSES), dtype=np.uint8)
+            mask = np.zeros((image.shape[0], image.shape[1], NUM_CLASSES), dtype=np.uint8)
 
-        # Tüm sınıflardan tek binary mask oluştur (herhangi bir hasar var mı?)
-        # (height, width, 19) → (height, width) — herhangi bir kanalda 1 varsa 1
+        # Tüm 19 sınıfı tek binary mask'a birleştir
+        # (512, 512, 19) → (512, 512): herhangi bir kanalda 1 varsa 1 yap
         binary_mask = mask.any(axis=2).astype(np.float32)
 
         # Eğer processor varsa, görseli modele uygun formata çevir
         if self.processor is not None:
-            pil_image = Image.fromarray(image)
-            inputs = self.processor(images=pil_image, return_tensors="pt")
-            # Batch boyutunu kaldır (processor [1, C, H, W] verir, biz [C, H, W] istiyoruz)
-            inputs = {k: v.squeeze(0) for k, v in inputs.items()}
-            inputs["ground_truth_mask"] = torch.tensor(binary_mask)
-            inputs["multi_class_mask"] = torch.tensor(
-                mask.astype(np.float32)
-            ).permute(2, 0, 1)  # (19, height, width)
-            return inputs
+            from src.config import Config
 
-        # Processor yoksa ham veriyi döndür
+            pil_image = Image.fromarray(image)
+
+            # Görseli işle — image_processor sadece görseli alır
+            image_inputs = self.processor.image_processor(
+                images=pil_image,
+                return_tensors="pt",
+            )
+            # Batch boyutunu kaldır: (1, 3, H, W) → (3, H, W)
+            pixel_values = image_inputs["pixel_values"].squeeze(0)
+
+            # Mask'ı SAM3 çıktı boyutuna (288x288) küçült
+            # Model her zaman 288x288 mask üretir — ground truth da aynı boyutta olmalı
+            mask_pil = Image.fromarray((binary_mask * 255).astype(np.uint8))
+            mask_resized = mask_pil.resize(
+                (Config.MASK_OUTPUT_SIZE, Config.MASK_OUTPUT_SIZE),
+                Image.NEAREST,  # En yakın komşu — 0/1 değerleri korur
+            )
+            mask_resized = np.array(mask_resized, dtype=np.float32) / 255.0
+
+            return {
+                "pixel_values"     : pixel_values,                 # (3, 1008, 1008)
+                "input_ids"        : self._input_ids.clone(),      # (seq_len,)
+                "attention_mask"   : self._attention_mask.clone(), # (seq_len,)
+                "ground_truth_mask": torch.tensor(mask_resized),   # (288, 288)
+            }
+
+        # Processor yoksa ham veriyi döndür (inspect_dataset.py gibi araçlar için)
         return {
-            "image": image,               # (height, width, 3) numpy — RGB
-            "mask": binary_mask,          # (height, width) numpy — tek binary mask
-            "multi_class_mask": mask,     # (height, width, 19) numpy — sınıf başına mask
-            "filename": base_name,
+            "image"           : image,         # (512, 512, 3) numpy — RGB
+            "mask"            : binary_mask,   # (512, 512) numpy — tek binary mask
+            "multi_class_mask": mask,          # (512, 512, 19) numpy — sınıf başına mask
+            "filename"        : base_name,
         }

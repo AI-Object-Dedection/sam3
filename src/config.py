@@ -31,10 +31,20 @@ class Config:
     VAL_IMAGES = "data/dacl10k/images/validation/"         # Validation görselleri (.npy)
 
     # ---- Eğitim Ayarları ----
-    BATCH_SIZE = 2         # Bir seferde kaç görsel işleneceği
+    BATCH_SIZE = 1         # Bir seferde kaç görsel işleneceği
     LEARNING_RATE = 1e-4   # Öğrenme hızı (ne kadar büyük adımlarla öğrensin)
     NUM_EPOCHS = 10        # Tüm veriyi kaç kez görecek
     IMAGE_SIZE = 1024      # Görsellerin yeniden boyutlandırılacağı piksel sayısı
+
+    # SAM3 mask decoder her zaman 288x288 boyutunda mask üretir
+    MASK_OUTPUT_SIZE = 288
+
+    # Modele verilen metin ipucu — modele "ne aradığını" söylüyoruz
+    TEXT_PROMPT = "damage"
+
+    # Test için kaç görsel kullanılacak (None = tüm veri seti)
+    MAX_TRAIN_SAMPLES = None  # Tüm 6935 eğitim görseli
+    MAX_VAL_SAMPLES = None    # Tüm 975 validation görseli
 
     # ---- LoRA Ayarları ----
     LORA_RANK = 8          # LoRA'nın rank değeri (düşük = daha az parametre)
