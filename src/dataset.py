@@ -193,11 +193,26 @@ class DACL10KDataset(Dataset):
             )
             mask_resized = np.array(mask_resized, dtype=np.float32) / 255.0
 
+            # Her sınıfın maskini de 288x288'e küçült — (19, 288, 288)
+            # Multi-class eğitim için: her kanal bir sınıfın maskleri
+            sinif_maskleri = []
+            for kanal in range(NUM_CLASSES):
+                kanal_mask = mask[:, :, kanal].astype(np.float32)
+                kanal_pil = Image.fromarray((kanal_mask * 255).astype(np.uint8))
+                kanal_resized = kanal_pil.resize(
+                    (Config.MASK_OUTPUT_SIZE, Config.MASK_OUTPUT_SIZE),
+                    Image.NEAREST,
+                )
+                sinif_maskleri.append(np.array(kanal_resized, dtype=np.float32) / 255.0)
+            # (19, 288, 288) tensor
+            multi_class_mask = torch.tensor(np.stack(sinif_maskleri, axis=0))
+
             return {
                 "pixel_values"     : pixel_values,                 # (3, 1008, 1008)
                 "input_ids"        : self._input_ids.clone(),      # (seq_len,)
                 "attention_mask"   : self._attention_mask.clone(), # (seq_len,)
                 "ground_truth_mask": torch.tensor(mask_resized),   # (288, 288)
+                "multi_class_mask" : multi_class_mask,             # (19, 288, 288)
             }
 
         # Processor yoksa ham veriyi döndür (inspect_dataset.py gibi araçlar için)

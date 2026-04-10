@@ -1,7 +1,10 @@
 """
-run_infer.py — Tek Görsel Üzerinde Tahmin Yapan Script
+run_infer.py — Inference Script
 
-Bu dosya eğitilmiş modelle tek bir görsel üzerinde segmentation yapar.
+Eğitilmiş modeli görseller üzerinde çalıştırır.
+İki mod:
+  - binary    : hasar var/yok (hızlı)
+  - multiclass: 19 sınıf ayrı ayrı, renkli (yavaş ama bilgilendirici)
 
 Kullanım:
     python scripts/run_infer.py
@@ -12,40 +15,73 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.config import Config
-from src.utils import log
-from src.model import load_model, load_processor
-from src.infer import run_inference
+from peft import PeftModel  # noqa: E402
+
+from src.config import Config  # noqa: E402
+from src.utils import log  # noqa: E402
+from src.model import load_model, load_processor  # noqa: E402
+from src.infer import run_inference, run_multiclass_inference  # noqa: E402
+
+# "binary" veya "multiclass"
+MOD = "multiclass"
+
+# Kaç görsel işlenecek
+GORSEL_SAYISI = 5
 
 
 def main():
-    """Tek görsel üzerinde inference çalıştırır."""
-
     log("=" * 50)
-    log("SAM3 Fine-Tuning — Inference Başlıyor")
+    log(f"SAM3 — Inference ({MOD} mod)")
     log("=" * 50)
 
-    # 1. Model ve processor'ı yükle
+    # 1. Model ve processor yukle
     model = load_model()
     processor = load_processor()
 
-    # 2. Checkpoint yükle (eğitilmiş model varsa)
-    # TODO: Eğitilmiş ağırlıkları yükleme kodu eklenecek
+    # 2. En iyi LoRA checkpoint yukle (mc_epoch_1 — val IoU en yuksek, overfitting yok)
+    checkpoint = "checkpoints/mc_epoch_1_lora"
+    if not os.path.exists(checkpoint):
+        log(f"HATA: Checkpoint bulunamadi: {checkpoint}")
+        return
 
-    # 3. Test görseli belirle
-    # TODO: Kullanıcıdan argüman olarak alınabilir
-    test_image = "data/test_image.jpg"  # Örnek yol
-    output_path = "outputs/prediction.png"
+    log(f"LoRA adapter yukleniyor: {checkpoint}")
+    model = PeftModel.from_pretrained(model, checkpoint)
+    log("LoRA adapter yuklendi.")
 
-    # 4. Tahmin yap
-    if os.path.exists(test_image):
-        mask = run_inference(model, processor, test_image, output_path)
-        log(f"Tahmin boyutu: {mask.shape}")
-    else:
-        log(f"Test görseli bulunamadı: {test_image}")
-        log("Lütfen 'data/' klasörüne bir test görseli ekleyin.")
+    # 3. Test gorsellerini sec — validation setinden ilk N gorsel
+    val_klasoru = Config.VAL_IMAGES
+    gorseller = sorted([
+        f for f in os.listdir(val_klasoru) if f.endswith(".npy")
+    ])[:GORSEL_SAYISI]
 
-    log("Script tamamlandı.")
+    if not gorseller:
+        log(f"HATA: {val_klasoru} klasorunde gorsel bulunamadi.")
+        return
+
+    log(f"{len(gorseller)} gorsel uzerinde {MOD} inference yapilacak...")
+
+    # 4. Her gorsel icin tahmin yap
+    for gorsel_adi in gorseller:
+        gorsel_yolu = os.path.join(val_klasoru, gorsel_adi)
+
+        if MOD == "multiclass":
+            run_multiclass_inference(
+                model=model,
+                processor=processor,
+                gorsel_yolu=gorsel_yolu,
+                cikti_yolu=Config.OUTPUT_DIR,
+            )
+        else:
+            run_inference(
+                model=model,
+                processor=processor,
+                gorsel_yolu=gorsel_yolu,
+                cikti_yolu=Config.OUTPUT_DIR,
+            )
+
+    log("=" * 50)
+    log(f"Tamamlandi! Sonuclar: {Config.OUTPUT_DIR}")
+    log("=" * 50)
 
 
 if __name__ == "__main__":
