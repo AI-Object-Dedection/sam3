@@ -118,3 +118,17 @@ Eğitim tamamlandı. Sırada:
 3. Modelin hasar maskini görselleştir
 
 Komut: `python scripts/run_infer.py`
+
+---
+
+## 2026-06 Güncellemesi — İyileştirme Altyapısı Eklendi
+
+Bu rapordaki çıkarımlara göre eğitim kodunda aşağıdaki geliştirmeler hazırlandı:
+
+- `BCE + Dice` ve `Focal + Dice` dahil seçilebilir loss altyapısı
+- Train set için augmentasyon pipeline'ı (crop/resize, brightness/contrast, rotation, blur/noise, perspective)
+- Cosine decay + warmup ve OneCycle scheduler seçenekleri
+- Validation loss tabanlı early stopping
+- En iyi modeli ayrı klasöre kaydetme (`best_lora`, `mc_best_lora`)
+
+Not: Point/box prompt ile SAM eğitimi bir sonraki adım olarak planlandı.

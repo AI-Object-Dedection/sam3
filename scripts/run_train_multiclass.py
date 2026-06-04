@@ -54,12 +54,16 @@ def main():
         annotations_dir=Config.TRAIN_MASKS,
         processor=processor,
         max_samples=Config.MAX_TRAIN_SAMPLES,
+        is_train=True,
+        use_augmentation=Config.USE_AUGMENTATION,
     )
     val_dataset = DACL10KDataset(
         images_dir=Config.VAL_IMAGES,
         annotations_dir=Config.VAL_MASKS,
         processor=processor,
         max_samples=Config.MAX_VAL_SAMPLES,
+        is_train=False,
+        use_augmentation=False,
     )
 
     train_dataloader = DataLoader(

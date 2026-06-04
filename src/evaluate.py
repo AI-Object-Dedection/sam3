@@ -16,6 +16,7 @@ import numpy as np
 import torch
 
 from src.config import Config
+from src.losses import build_loss_fn
 from src.utils import log
 
 
@@ -59,14 +60,12 @@ def evaluate(model, dataloader, loss_fn=None):
     Returns:
         dict: {"mean_iou": float, "mean_loss": float, "num_samples": int}
     """
-    import torch.nn as nn
-
     model.eval()  # Dropout vb. kapat — sadece tahmin yap
     iou_scores = []
     loss_scores = []
 
     if loss_fn is None:
-        loss_fn = nn.BCEWithLogitsLoss()
+        loss_fn = build_loss_fn()
 
     log("Validation başlıyor...")
 

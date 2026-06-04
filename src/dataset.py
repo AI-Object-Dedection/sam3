@@ -26,11 +26,14 @@ Bu dosyanın görevi:
 """
 
 import os
+import random
 
 import numpy as np
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
+from torchvision.transforms import InterpolationMode
+from torchvision.transforms import functional as TF
 
 # DACL10K'deki 19 sınıf (mask kanallarının sırası)
 # 13 hasar türü + 6 köprü bileşeni
@@ -82,7 +85,15 @@ class DACL10KDataset(Dataset):
         ground_truth_mask: (288, 288)        — gerçek hasar maskı (0/1)
     """
 
-    def __init__(self, images_dir, annotations_dir, processor=None, max_samples=None):
+    def __init__(
+        self,
+        images_dir,
+        annotations_dir,
+        processor=None,
+        max_samples=None,
+        is_train=False,
+        use_augmentation=False,
+    ):
         """
         Args:
             images_dir:       Görsel .npy dosyalarının bulunduğu klasör
@@ -93,6 +104,8 @@ class DACL10KDataset(Dataset):
         self.images_dir = images_dir
         self.annotations_dir = annotations_dir
         self.processor = processor
+        self.is_train = is_train
+        self.use_augmentation = use_augmentation
 
         # .npy dosya listesini oluştur (sıralı)
         self.file_list = self._build_file_list()
@@ -120,6 +133,92 @@ class DACL10KDataset(Dataset):
             self._input_ids = text_inputs["input_ids"].squeeze(0)
             self._attention_mask = text_inputs["attention_mask"].squeeze(0)
             print("[dataset] Tokenizer hazir.")
+
+    def _apply_augmentations(self, image, mask):
+        """
+        Eğitim sırasında veri çeşitliliği için augmentasyon uygular.
+
+        image: (H, W, 3) uint8
+        mask : (H, W, C) uint8
+        """
+        from src.config import Config
+
+        image_t = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
+        mask_t = torch.from_numpy(mask).permute(2, 0, 1).float()
+
+        _, h, w = image_t.shape
+
+        if random.random() < Config.AUG_CROP_RESIZE_PROB:
+            crop_scale = random.uniform(0.75, 1.0)
+            crop_h = max(1, int(h * crop_scale))
+            crop_w = max(1, int(w * crop_scale))
+            top = random.randint(0, h - crop_h) if h > crop_h else 0
+            left = random.randint(0, w - crop_w) if w > crop_w else 0
+            image_t = TF.resized_crop(
+                image_t,
+                top=top,
+                left=left,
+                height=crop_h,
+                width=crop_w,
+                size=[h, w],
+                interpolation=InterpolationMode.BILINEAR,
+                antialias=True,
+            )
+            mask_t = TF.resized_crop(
+                mask_t,
+                top=top,
+                left=left,
+                height=crop_h,
+                width=crop_w,
+                size=[h, w],
+                interpolation=InterpolationMode.NEAREST,
+                antialias=False,
+            )
+
+        if random.random() < Config.AUG_ROTATION_PROB:
+            angle = random.uniform(-Config.AUG_ROTATION_DEGREES, Config.AUG_ROTATION_DEGREES)
+            image_t = TF.rotate(image_t, angle, interpolation=InterpolationMode.BILINEAR)
+            mask_t = TF.rotate(mask_t, angle, interpolation=InterpolationMode.NEAREST)
+
+        if random.random() < Config.AUG_PERSPECTIVE_PROB:
+            max_warp_w = int(w * 0.06)
+            max_warp_h = int(h * 0.06)
+            start_points = [[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]]
+            end_points = [
+                [random.randint(0, max_warp_w), random.randint(0, max_warp_h)],
+                [w - 1 - random.randint(0, max_warp_w), random.randint(0, max_warp_h)],
+                [w - 1 - random.randint(0, max_warp_w), h - 1 - random.randint(0, max_warp_h)],
+                [random.randint(0, max_warp_w), h - 1 - random.randint(0, max_warp_h)],
+            ]
+            image_t = TF.perspective(
+                image_t,
+                startpoints=start_points,
+                endpoints=end_points,
+                interpolation=InterpolationMode.BILINEAR,
+            )
+            mask_t = TF.perspective(
+                mask_t,
+                startpoints=start_points,
+                endpoints=end_points,
+                interpolation=InterpolationMode.NEAREST,
+            )
+
+        if random.random() < Config.AUG_BRIGHTNESS_CONTRAST_PROB:
+            brightness_factor = random.uniform(*Config.AUG_BRIGHTNESS_RANGE)
+            contrast_factor = random.uniform(*Config.AUG_CONTRAST_RANGE)
+            image_t = TF.adjust_brightness(image_t, brightness_factor)
+            image_t = TF.adjust_contrast(image_t, contrast_factor)
+
+        if random.random() < Config.AUG_BLUR_PROB:
+            image_t = TF.gaussian_blur(image_t, kernel_size=Config.AUG_BLUR_KERNEL)
+
+        if random.random() < Config.AUG_NOISE_PROB:
+            noise = torch.randn_like(image_t) * Config.AUG_NOISE_STD
+            image_t = (image_t + noise).clamp(0.0, 1.0)
+
+        image_aug = (image_t.clamp(0.0, 1.0).permute(1, 2, 0).numpy() * 255.0).astype(np.uint8)
+        mask_aug = (mask_t.permute(1, 2, 0).numpy() > 0.5).astype(np.uint8)
+        return image_aug, mask_aug
 
     def _build_file_list(self):
         """
@@ -165,6 +264,9 @@ class DACL10KDataset(Dataset):
             mask = np.load(mask_path)  # (512, 512, 19)
         else:
             mask = np.zeros((image.shape[0], image.shape[1], NUM_CLASSES), dtype=np.uint8)
+
+        if self.is_train and self.use_augmentation:
+            image, mask = self._apply_augmentations(image, mask)
 
         # Tüm 19 sınıfı tek binary mask'a birleştir
         # (512, 512, 19) → (512, 512): herhangi bir kanalda 1 varsa 1 yap

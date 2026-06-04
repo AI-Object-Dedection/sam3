@@ -23,17 +23,53 @@ SAM3 akışı (tam pipeline):
 """
 
 import random
+import math
 
 import torch
-import torch.nn as nn
 
 from src.config import Config
 from src.dataset import DACL10K_CLASSES
 from src.evaluate import calculate_iou
+from src.losses import build_loss_fn
 from src.utils import log, ensure_dir
 
 
-def train_one_epoch(model, dataloader, optimizer, loss_fn, scaler, epoch):
+def _create_scheduler(optimizer, steps_per_epoch):
+    """Config ayarlarına göre LR scheduler oluşturur."""
+    scheduler_name = Config.LR_SCHEDULER.lower()
+    total_steps = max(steps_per_epoch * Config.NUM_EPOCHS, 1)
+
+    if scheduler_name == "none":
+        return None
+
+    if scheduler_name == "cosine_warmup":
+        warmup_steps = int(total_steps * Config.WARMUP_RATIO)
+
+        def lr_lambda(current_step):
+            if current_step < warmup_steps:
+                return float(current_step) / float(max(1, warmup_steps))
+
+            progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+            cosine_decay = 0.5 * (1.0 + math.cos(math.pi * progress))
+            min_ratio = Config.MIN_LR_RATIO
+            return min_ratio + (1.0 - min_ratio) * cosine_decay
+
+        return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+    if scheduler_name == "onecycle":
+        return torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=Config.LEARNING_RATE,
+            total_steps=total_steps,
+            pct_start=Config.WARMUP_RATIO,
+            div_factor=10.0,
+            final_div_factor=20.0,
+        )
+
+    raise ValueError("Config.LR_SCHEDULER gecersiz. Beklenen: none, cosine_warmup, onecycle")
+
+
+def train_one_epoch(model, dataloader, optimizer, scheduler, loss_fn, scaler, epoch):
     """
     Modeli tek bir epoch boyunca eğitir.
 
@@ -61,7 +97,7 @@ def train_one_epoch(model, dataloader, optimizer, loss_fn, scaler, epoch):
 
         # ---- İleri Geçiş (Forward Pass) ----
         # Mixed precision: bazı hesaplamalar 16-bit ile yapılır → daha az bellek
-        with torch.amp.autocast("cuda"):
+        with torch.amp.autocast("cuda", enabled=(Config.DEVICE == "cuda")):
             outputs = model(
                 pixel_values=pixel_values,
                 input_ids=input_ids,
@@ -82,6 +118,8 @@ def train_one_epoch(model, dataloader, optimizer, loss_fn, scaler, epoch):
         scaler.scale(loss).backward()  # Gradientleri hesapla (mixed precision ile)
         scaler.step(optimizer)         # Parametreleri güncelle
         scaler.update()                # Scaler'ı güncelle
+        if scheduler is not None:
+            scheduler.step()
 
         # İstatistikleri biriktir
         iou = calculate_iou(pred_mask.detach(), gt_mask)
@@ -90,8 +128,9 @@ def train_one_epoch(model, dataloader, optimizer, loss_fn, scaler, epoch):
 
         # Her 10 batch'te bir durum bilgisi yazdır
         if (batch_idx + 1) % 10 == 0:
+            current_lr = optimizer.param_groups[0]["lr"]
             log(f"  Epoch {epoch+1} | Batch {batch_idx+1}/{len(dataloader)} "
-                f"| Loss: {loss.item():.4f} | IoU: {iou:.4f}")
+                f"| Loss: {loss.item():.4f} | IoU: {iou:.4f} | LR: {current_lr:.6e}")
 
     avg_loss = total_loss / max(len(dataloader), 1)
     avg_iou = total_iou / max(len(dataloader), 1)
@@ -115,23 +154,30 @@ def train(model, train_dataloader, val_dataloader=None):
     log(f"Cihaz          : {Config.DEVICE}")
     log(f"Text prompt    : '{Config.TEXT_PROMPT}'")
     log(f"Mask boyutu    : {Config.MASK_OUTPUT_SIZE}x{Config.MASK_OUTPUT_SIZE}")
+    log(f"Loss tipi      : {Config.LOSS_TYPE}")
+    log(f"LR scheduler   : {Config.LR_SCHEDULER}")
+    log(f"Early stopping : {Config.EARLY_STOPPING}")
 
     # Checkpoint klasörünü oluştur
     ensure_dir(Config.CHECKPOINT_DIR)
 
-    # Kayıp fonksiyonu: Binary Cross Entropy (her piksel için hasar var/yok)
-    loss_fn = nn.BCEWithLogitsLoss()
+    # Kayıp fonksiyonu: Config'e göre dinamik seçilir
+    loss_fn = build_loss_fn()
 
     # Optimizer: sadece LoRA parametrelerini eğit (frozen parametreler hariç)
     optimizer = torch.optim.AdamW(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=Config.LEARNING_RATE,
     )
+    scheduler = _create_scheduler(optimizer, len(train_dataloader))
 
     # Mixed precision scaler: GPU belleğinden tasarruf sağlar
     # CPU'da eğitiliyorsa scaler devre dışı
     use_amp = (Config.DEVICE == "cuda")
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+
+    best_val_loss = float("inf")
+    no_improvement_epochs = 0
 
     # Her epoch için eğitim yap
     for epoch in range(Config.NUM_EPOCHS):
@@ -140,7 +186,7 @@ def train(model, train_dataloader, val_dataloader=None):
 
         # Eğitim
         train_loss, train_iou = train_one_epoch(
-            model, train_dataloader, optimizer, loss_fn, scaler, epoch
+            model, train_dataloader, optimizer, scheduler, loss_fn, scaler, epoch
         )
         log(f"Epoch {epoch+1} [train] | Loss: {train_loss:.4f} | IoU: {train_iou:.4f}")
 
@@ -149,6 +195,21 @@ def train(model, train_dataloader, val_dataloader=None):
             results = evaluate(model, val_dataloader, loss_fn)
             log(f"Epoch {epoch+1} [val]   | Loss: {results['mean_loss']:.4f} "
                 f"| IoU: {results['mean_iou']:.4f}")
+
+            if results["mean_loss"] < (best_val_loss - Config.EARLY_STOPPING_MIN_DELTA):
+                best_val_loss = results["mean_loss"]
+                no_improvement_epochs = 0
+
+                best_path = f"{Config.CHECKPOINT_DIR}/best_lora"
+                model.save_pretrained(best_path)
+                log(f"En iyi model guncellendi: {best_path} | val_loss: {best_val_loss:.4f}")
+            else:
+                no_improvement_epochs += 1
+                log(f"Val loss iyilesmedi. Sayac: {no_improvement_epochs}/{Config.EARLY_STOPPING_PATIENCE}")
+
+                if Config.EARLY_STOPPING and no_improvement_epochs >= Config.EARLY_STOPPING_PATIENCE:
+                    log("Early stopping tetiklendi. Egitim durduruluyor.")
+                    break
 
         # Checkpoint kaydet — sadece LoRA adapter ağırlıklarını kaydet
         # (base model HuggingFace'ten yüklenebilir, sadece öğrenilen kısım kaydedilir)
@@ -160,7 +221,7 @@ def train(model, train_dataloader, val_dataloader=None):
     log("Eğitim tamamlandı!")
 
 
-def multiclass_train_one_epoch(model, dataloader, optimizer, loss_fn, scaler, processor, epoch):
+def multiclass_train_one_epoch(model, dataloader, optimizer, scheduler, loss_fn, scaler, processor, epoch):
     """
     Multi-class eğitim: her batch'te rastgele bir sınıf seçilir,
     o sınıfın adı text prompt olarak, o sınıfın maskı ground truth olarak kullanılır.
@@ -219,7 +280,7 @@ def multiclass_train_one_epoch(model, dataloader, optimizer, loss_fn, scaler, pr
             input_ids      = tokenlar["input_ids"].unsqueeze(0).to(Config.DEVICE)
             attention_mask = tokenlar["attention_mask"].unsqueeze(0).to(Config.DEVICE)
 
-        with torch.amp.autocast("cuda"):
+        with torch.amp.autocast("cuda", enabled=(Config.DEVICE == "cuda")):
             outputs   = model(
                 pixel_values=pixel_values,
                 input_ids=input_ids,
@@ -232,14 +293,18 @@ def multiclass_train_one_epoch(model, dataloader, optimizer, loss_fn, scaler, pr
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
+        if scheduler is not None:
+            scheduler.step()
 
         iou        = calculate_iou(pred_mask.detach(), gt_mask)
         total_loss += loss.item()
         total_iou  += iou
 
         if (batch_idx + 1) % 10 == 0:
+            current_lr = optimizer.param_groups[0]["lr"]
             log(f"  Epoch {epoch+1} | Batch {batch_idx+1}/{len(dataloader)} "
-                f"| Sinif: {sinif_adi:<15} | Loss: {loss.item():.4f} | IoU: {iou:.4f}")
+                f"| Sinif: {sinif_adi:<15} | Loss: {loss.item():.4f} | IoU: {iou:.4f} "
+                f"| LR: {current_lr:.6e}")
 
     avg_loss = total_loss / max(len(dataloader), 1)
     avg_iou  = total_iou  / max(len(dataloader), 1)
@@ -263,22 +328,29 @@ def train_multiclass(model, train_dataloader, val_dataloader, processor):
     log(f"Epoch sayısı  : {Config.NUM_EPOCHS}")
     log(f"Sinif sayisi  : {len(DACL10K_CLASSES)}")
     log(f"Cihaz         : {Config.DEVICE}")
+    log(f"Loss tipi     : {Config.LOSS_TYPE}")
+    log(f"LR scheduler  : {Config.LR_SCHEDULER}")
+    log(f"Early stopping: {Config.EARLY_STOPPING}")
 
     ensure_dir(Config.CHECKPOINT_DIR)
 
-    loss_fn   = nn.BCEWithLogitsLoss()
+    loss_fn   = build_loss_fn()
     optimizer = torch.optim.AdamW(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=Config.LEARNING_RATE,
     )
+    scheduler = _create_scheduler(optimizer, len(train_dataloader))
     scaler = torch.amp.GradScaler("cuda", enabled=(Config.DEVICE == "cuda"))
+
+    best_val_loss = float("inf")
+    no_improvement_epochs = 0
 
     for epoch in range(Config.NUM_EPOCHS):
         log(f"\n{'='*50}")
         log(f"Epoch {epoch+1}/{Config.NUM_EPOCHS} başladı")
 
         train_loss, train_iou = multiclass_train_one_epoch(
-            model, train_dataloader, optimizer, loss_fn, scaler, processor, epoch
+            model, train_dataloader, optimizer, scheduler, loss_fn, scaler, processor, epoch
         )
         log(f"Epoch {epoch+1} [train] | Loss: {train_loss:.4f} | IoU: {train_iou:.4f}")
 
@@ -286,6 +358,21 @@ def train_multiclass(model, train_dataloader, val_dataloader, processor):
             results = evaluate(model, val_dataloader, loss_fn)
             log(f"Epoch {epoch+1} [val]   | Loss: {results['mean_loss']:.4f} "
                 f"| IoU: {results['mean_iou']:.4f}")
+
+            if results["mean_loss"] < (best_val_loss - Config.EARLY_STOPPING_MIN_DELTA):
+                best_val_loss = results["mean_loss"]
+                no_improvement_epochs = 0
+
+                best_path = f"{Config.CHECKPOINT_DIR}/mc_best_lora"
+                model.save_pretrained(best_path)
+                log(f"En iyi model guncellendi: {best_path} | val_loss: {best_val_loss:.4f}")
+            else:
+                no_improvement_epochs += 1
+                log(f"Val loss iyilesmedi. Sayac: {no_improvement_epochs}/{Config.EARLY_STOPPING_PATIENCE}")
+
+                if Config.EARLY_STOPPING and no_improvement_epochs >= Config.EARLY_STOPPING_PATIENCE:
+                    log("Early stopping tetiklendi. Multi-class egitim durduruluyor.")
+                    break
 
         adapter_path = f"{Config.CHECKPOINT_DIR}/mc_epoch_{epoch+1}_lora"
         model.save_pretrained(adapter_path)

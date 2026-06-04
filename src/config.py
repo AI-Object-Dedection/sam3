@@ -42,6 +42,43 @@ class Config:
     # Modele verilen metin ipucu — modele "ne aradığını" söylüyoruz
     TEXT_PROMPT = "damage"
 
+    # ---- Loss Ayarları ----
+    # Seçenekler: "bce", "dice", "bce_dice", "focal", "focal_dice"
+    LOSS_TYPE = "bce_dice"
+    BCE_WEIGHT = 0.5
+    DICE_WEIGHT = 0.5
+    FOCAL_ALPHA = 0.25
+    FOCAL_GAMMA = 2.0
+
+    # ---- Augmentation Ayarları ----
+    USE_AUGMENTATION = True
+    AUG_CROP_RESIZE_PROB = 0.5
+    AUG_ROTATION_PROB = 0.4
+    AUG_ROTATION_DEGREES = 8
+    AUG_BRIGHTNESS_CONTRAST_PROB = 0.5
+    AUG_BRIGHTNESS_RANGE = (0.8, 1.2)
+    AUG_CONTRAST_RANGE = (0.8, 1.2)
+    AUG_BLUR_PROB = 0.2
+    AUG_BLUR_KERNEL = 3
+    AUG_NOISE_PROB = 0.2
+    AUG_NOISE_STD = 0.03
+    AUG_PERSPECTIVE_PROB = 0.2
+
+    # ---- Optimizer/Scheduler Ayarları ----
+    LR_SCHEDULER = "cosine_warmup"  # Seçenekler: "none", "cosine_warmup", "onecycle"
+    WARMUP_RATIO = 0.1               # Toplam adımların yüzde kaçı warmup olsun
+    MIN_LR_RATIO = 0.05              # Cosine sonunda LR = LEARNING_RATE * MIN_LR_RATIO
+
+    # ---- DDP Ayarları (Kaggle 2xGPU için) ----
+    DDP_BACKEND = "nccl"
+    DDP_NUM_WORKERS = 2
+    DDP_FIND_UNUSED_PARAMETERS = True
+
+    # ---- Early Stopping Ayarları ----
+    EARLY_STOPPING = True
+    EARLY_STOPPING_PATIENCE = 2
+    EARLY_STOPPING_MIN_DELTA = 1e-4
+
     # Test için kaç görsel kullanılacak (None = tüm veri seti)
     MAX_TRAIN_SAMPLES = None  # Tüm 6935 eğitim görseli
     MAX_VAL_SAMPLES = None    # Tüm 975 validation görseli

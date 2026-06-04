@@ -56,12 +56,21 @@ python scripts/inspect_dataset.py
 # Eğitimi başlat
 python scripts/run_train.py
 
+# Kaggle 2xGPU (DDP) eğitimi başlat
+torchrun --nproc_per_node=2 scripts/run_train_ddp.py
+
 # Değerlendirme yap
 python scripts/run_eval.py
 
 # Tek görsel üzerinde tahmin yap
 python scripts/run_infer.py
 ```
+
+### Kaggle DDP Notu
+
+- Bu komut Kaggle'da 2 adet T4 GPU'yu aynı anda kullanır.
+- DDP checkpoint'leri `checkpoints/ddp_epoch_X_lora` altında kaydedilir.
+- En iyi checkpoint: `checkpoints/ddp_best_lora`
 
 ## Ayarlar
 
@@ -72,6 +81,29 @@ Tüm proje ayarları `src/config.py` dosyasında bulunur:
 - **Learning rate**: 1e-4
 - **Epoch sayısı**: 10
 - **LoRA rank**: 8
+
+## Faz 4 Eğitim İyileştirmeleri
+
+Bu repoda eğitim kalitesini artırmak için aşağıdaki özellikler eklendi:
+
+- **Loss kombinasyonları**: `bce`, `dice`, `bce_dice`, `focal`, `focal_dice`
+- **Augmentasyon** (sadece train set):
+	- random crop/resize
+	- brightness/contrast
+	- hafif rotation
+	- blur/noise
+	- perspective
+- **LR Scheduler**: `cosine_warmup` veya `onecycle`
+- **Early stopping**: validation loss iyileşmezse eğitimi erken durdurur
+- **Best checkpoint kaydı**: `checkpoints/best_lora` ve `checkpoints/mc_best_lora`
+
+Tüm bu ayarlar `src/config.py` içinden açılıp kapatılabilir.
+
+## Not: Point Prompt
+
+Şu an eğitim hattı metin prompt ile çalışır (`TEXT_PROMPT = "damage"`).
+SAM point/box prompt desteği bir sonraki adım olarak planlandı; bu adımda
+önce loss + augmentasyon + scheduler + early stopping tarafı stabilize edildi.
 
 ## Ekip
 

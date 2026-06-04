@@ -48,12 +48,15 @@ def main():
     log("Dataset hazırlanıyor...")
     log(f"Eğitim örnek sayısı    : {Config.MAX_TRAIN_SAMPLES or 'tümü'}")
     log(f"Validation örnek sayısı: {Config.MAX_VAL_SAMPLES or 'tümü'}")
+    log(f"Augmentasyon aktif mi  : {Config.USE_AUGMENTATION}")
 
     train_dataset = DACL10KDataset(
         images_dir=Config.TRAIN_IMAGES,
         annotations_dir=Config.TRAIN_MASKS,
         processor=processor,
         max_samples=Config.MAX_TRAIN_SAMPLES,
+        is_train=True,
+        use_augmentation=Config.USE_AUGMENTATION,
     )
 
     val_dataset = DACL10KDataset(
@@ -61,6 +64,8 @@ def main():
         annotations_dir=Config.VAL_MASKS,
         processor=processor,
         max_samples=Config.MAX_VAL_SAMPLES,
+        is_train=False,
+        use_augmentation=False,
     )
 
     # 5. DataLoader oluştur — veriyi batch'ler halinde modele sunar
