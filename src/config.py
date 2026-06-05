@@ -12,6 +12,8 @@ Herhangi bir ayarı değiştirmek istediğinizde sadece buraya bakmanız yeterli
 Bu dosya projenin "kontrol paneli" gibidir.
 """
 
+import os
+
 import torch
 
 
@@ -19,7 +21,7 @@ class Config:
     """Projenin tüm ayarlarını tutan sınıf."""
 
     # ---- Model Ayarları ----
-    MODEL_NAME = "facebook/sam3"  # HuggingFace'teki model adı
+    MODEL_NAME = os.environ.get("SAM3_MODEL_NAME", "facebook/sam3")
 
     # ---- Dataset Ayarları ----
     # NOT: Kaggle versiyonu numpy (.npy) formatında

@@ -119,36 +119,29 @@ model = Sam3Model.from_pretrained("facebook/sam3")
 
 ### Annotation (İşaretleme) Formatı
 
-Datasetninja.com versiyonu **Supervisely formatında** JSON dosyaları kullanır.
+Datasetninja.com versiyonu **LabelMe benzeri JSON** dosyaları kullanır.
 Her görsel için ayrı bir `.json` dosyası var. Yapısı:
 
 ```json
 {
-  "description": "",
-  "size": {
-    "height": 960,
-    "width": 1280
-  },
-  "objects": [
+  "imageHeight": 1440,
+  "imageWidth": 1920,
+  "imagePath": "images/train/dacl10k_v2_train_0000.jpg",
+  "shapes": [
     {
-      "classTitle": "Crack",
-      "points": {
-        "exterior": [[100, 200], [150, 250], [120, 300]],
-        "interior": []
-      }
+      "label": "Crack",
+      "points": [[100, 200], [150, 250], [120, 300]]
     },
     {
-      "classTitle": "Rust",
-      "points": {
-        "exterior": [[400, 100], [500, 100], [500, 200], [400, 200]],
-        "interior": []
-      }
+      "label": "Rust",
+      "points": [[400, 100], [500, 100], [500, 200], [400, 200]]
     }
   ]
 }
 ```
 
 **Önemli:** Bir görselde birden fazla hasar olabilir (multi-label).
+Kod tarafında `src/dataset.py`, bu polygon noktalarını eğitim sırasında 19 kanallı maskeye çevirir.
 
 ### Klasör Yapısı
 

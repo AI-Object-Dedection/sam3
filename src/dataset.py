@@ -25,15 +25,18 @@ Bu dosyanın görevi:
 .npy dosyalarını okuyarak modelin kullanabileceği formata çevirmek.
 """
 
+import json
 import os
 import random
 
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, ImageDraw
 from torch.utils.data import Dataset
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms import functional as TF
+
+from src.config import Config
 
 # DACL10K'deki 19 sınıf (mask kanallarının sırası)
 # 13 hasar türü + 6 köprü bileşeni
@@ -64,6 +67,42 @@ DACL10K_CLASSES = [
 
 # Sınıf sayısı
 NUM_CLASSES = len(DACL10K_CLASSES)  # 19
+
+
+def _json_annotation_to_mask(json_path, height, width):
+    """
+    DatasetNinja/DACL10K JSON annotation dosyasını çok kanallı maskeye çevirir.
+
+    JSON içinde her şekil `shapes` listesinde tutulur:
+    - `label`: sınıf adı
+    - `points`: polygon noktaları
+
+    Dönen mask boyutu: (height, width, 19)
+    """
+    mask = np.zeros((height, width, NUM_CLASSES), dtype=np.uint8)
+
+    with open(json_path, "r", encoding="utf-8") as f:
+        annotation = json.load(f)
+
+    for shape in annotation.get("shapes", []):
+        class_name = shape.get("label")
+        points = shape.get("points", [])
+
+        if class_name not in DACL10K_CLASSES or len(points) < 3:
+            continue
+
+        class_index = DACL10K_CLASSES.index(class_name)
+        single_mask = Image.new("L", (width, height), 0)
+        draw = ImageDraw.Draw(single_mask)
+        polygon = [(int(x), int(y)) for x, y in points]
+        draw.polygon(polygon, outline=1, fill=1)
+
+        mask[:, :, class_index] = np.maximum(
+            mask[:, :, class_index],
+            np.array(single_mask, dtype=np.uint8),
+        )
+
+    return mask
 
 
 class DACL10KDataset(Dataset):
@@ -234,9 +273,17 @@ class DACL10KDataset(Dataset):
         npy_files = sorted([
             os.path.splitext(f)[0]  # Uzantıyı çıkar: "resim.npy" → "resim"
             for f in os.listdir(self.images_dir)
-            if f.lower().endswith(".npy")
+            if f.lower().endswith((".npy", ".jpg", ".jpeg", ".png"))
         ])
         return npy_files
+
+    def _dosya_bul(self, klasor, temel_ad, uzantilar):
+        """Verilen temel ada ait ilk mevcut dosya yolunu bulur."""
+        for uzanti in uzantilar:
+            dosya_yolu = os.path.join(klasor, temel_ad + uzanti)
+            if os.path.exists(dosya_yolu):
+                return dosya_yolu
+        return None
 
     def __len__(self):
         """Veri setindeki toplam görsel sayısı."""
@@ -255,15 +302,35 @@ class DACL10KDataset(Dataset):
         base_name = self.file_list[idx]
 
         # Görseli oku — (512, 512, 3) uint8
-        image_path = os.path.join(self.images_dir, base_name + ".npy")
-        image = np.load(image_path)  # (512, 512, 3)
+        image_path = self._dosya_bul(
+            self.images_dir,
+            base_name,
+            [".npy", ".jpg", ".jpeg", ".png"],
+        )
+        if image_path is None:
+            raise FileNotFoundError(f"Görsel bulunamadı: {base_name}")
+
+        if image_path.lower().endswith(".npy"):
+            image = np.load(image_path)
+        else:
+            image = np.array(Image.open(image_path).convert("RGB"))
 
         # Mask'ı oku — (512, 512, 19) uint8
-        mask_path = os.path.join(self.annotations_dir, base_name + ".npy")
-        if os.path.exists(mask_path):
-            mask = np.load(mask_path)  # (512, 512, 19)
-        else:
+        mask_path = self._dosya_bul(
+            self.annotations_dir,
+            base_name,
+            [".npy", ".json"],
+        )
+        if mask_path is None:
             mask = np.zeros((image.shape[0], image.shape[1], NUM_CLASSES), dtype=np.uint8)
+        elif mask_path.lower().endswith(".npy"):
+            mask = np.load(mask_path)
+        else:
+            mask = _json_annotation_to_mask(
+                mask_path,
+                height=image.shape[0],
+                width=image.shape[1],
+            )
 
         if self.is_train and self.use_augmentation:
             image, mask = self._apply_augmentations(image, mask)

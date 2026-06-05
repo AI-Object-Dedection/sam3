@@ -185,7 +185,12 @@ def main():
     processor = load_processor()
 
     # Her process modeli kendi GPU'suna kurar
-    base_model = Sam3Model.from_pretrained(Config.MODEL_NAME, torch_dtype=torch.float16)
+    base_model = Sam3Model.from_pretrained(
+        Config.MODEL_NAME,
+        torch_dtype=torch.float16,
+        low_cpu_mem_usage=True,
+        local_files_only=os.path.isdir(Config.MODEL_NAME),
+    )
     base_model = base_model.to(device)
     model = apply_lora(base_model)
 

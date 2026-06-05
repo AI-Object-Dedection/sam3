@@ -37,6 +37,8 @@ Bu dosyada iki fonksiyon var:
 - load_processor() → görselleri modele uygun hale getiren processor'ı yükler
 """
 
+import os
+
 import torch
 from transformers import Sam3Model, Sam3Processor
 
@@ -59,7 +61,13 @@ def load_model():
     # Modeli HuggingFace'ten indir ve yükle
     # torch_dtype=float16 → model yarı hassasiyette yüklenir
     # Bu sayede: yükleme ~2x hızlı, VRAM kullanımı ~yarıya düşer
-    model = Sam3Model.from_pretrained(Config.MODEL_NAME, torch_dtype=torch.float16)
+    yerel_model_mi = os.path.isdir(Config.MODEL_NAME)
+    model = Sam3Model.from_pretrained(
+        Config.MODEL_NAME,
+        torch_dtype=torch.float16,
+        low_cpu_mem_usage=True,
+        local_files_only=yerel_model_mi,
+    )
 
     # Modeli doğru cihaza taşı (GPU varsa GPU, yoksa CPU)
     model = model.to(Config.DEVICE)
@@ -83,7 +91,11 @@ def load_processor():
     """
     log(f"Processor yükleniyor: {Config.MODEL_NAME}")
 
-    processor = Sam3Processor.from_pretrained(Config.MODEL_NAME)
+    yerel_model_mi = os.path.isdir(Config.MODEL_NAME)
+    processor = Sam3Processor.from_pretrained(
+        Config.MODEL_NAME,
+        local_files_only=yerel_model_mi,
+    )
 
     log("Processor yüklendi.")
     return processor
