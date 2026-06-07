@@ -17,6 +17,24 @@ import os
 import torch
 
 
+def _env_int(name, default):
+    """Ortam degiskeninden integer ayar okur."""
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return default
+    return int(value)
+
+
+def _env_optional_int(name, default):
+    """Bos birakilirsa None/default, doluysa integer ayar okur."""
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return default
+    if value.lower() == "none":
+        return None
+    return int(value)
+
+
 class Config:
     """Projenin tüm ayarlarını tutan sınıf."""
 
@@ -35,7 +53,7 @@ class Config:
     # ---- Eğitim Ayarları ----
     BATCH_SIZE = 1         # Bir seferde kaç görsel işleneceği
     LEARNING_RATE = 1e-4   # Öğrenme hızı (ne kadar büyük adımlarla öğrensin)
-    NUM_EPOCHS = 10        # Tüm veriyi kaç kez görecek
+    NUM_EPOCHS = _env_int("NUM_EPOCHS", 10)  # Tüm veriyi kaç kez görecek
     IMAGE_SIZE = 1024      # Görsellerin yeniden boyutlandırılacağı piksel sayısı
 
     # SAM3 mask decoder her zaman 288x288 boyutunda mask üretir
@@ -82,8 +100,9 @@ class Config:
     EARLY_STOPPING_MIN_DELTA = 1e-4
 
     # Test için kaç görsel kullanılacak (None = tüm veri seti)
-    MAX_TRAIN_SAMPLES = None  # Tüm 6935 eğitim görseli
-    MAX_VAL_SAMPLES = None    # Tüm 975 validation görseli
+    MAX_TRAIN_SAMPLES = _env_optional_int("MAX_TRAIN_SAMPLES", None)
+    MAX_VAL_SAMPLES = _env_optional_int("MAX_VAL_SAMPLES", None)
+    CHECKPOINT_EVERY_STEPS = _env_int("CHECKPOINT_EVERY_STEPS", 500)
 
     # ---- LoRA Ayarları ----
     LORA_RANK = 8          # LoRA'nın rank değeri (düşük = daha az parametre)

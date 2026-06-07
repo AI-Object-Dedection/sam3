@@ -132,6 +132,16 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, loss_fn, scaler, ep
             log(f"  Epoch {epoch+1} | Batch {batch_idx+1}/{len(dataloader)} "
                 f"| Loss: {loss.item():.4f} | IoU: {iou:.4f} | LR: {current_lr:.6e}")
 
+        if (
+            Config.CHECKPOINT_EVERY_STEPS > 0
+            and (batch_idx + 1) % Config.CHECKPOINT_EVERY_STEPS == 0
+        ):
+            ara_kayit_yolu = (
+                f"{Config.CHECKPOINT_DIR}/epoch_{epoch+1}_batch_{batch_idx+1}_lora"
+            )
+            model.save_pretrained(ara_kayit_yolu)
+            log(f"Ara checkpoint kaydedildi: {ara_kayit_yolu}")
+
     avg_loss = total_loss / max(len(dataloader), 1)
     avg_iou = total_iou / max(len(dataloader), 1)
     return avg_loss, avg_iou
@@ -305,6 +315,16 @@ def multiclass_train_one_epoch(model, dataloader, optimizer, scheduler, loss_fn,
             log(f"  Epoch {epoch+1} | Batch {batch_idx+1}/{len(dataloader)} "
                 f"| Sinif: {sinif_adi:<15} | Loss: {loss.item():.4f} | IoU: {iou:.4f} "
                 f"| LR: {current_lr:.6e}")
+
+        if (
+            Config.CHECKPOINT_EVERY_STEPS > 0
+            and (batch_idx + 1) % Config.CHECKPOINT_EVERY_STEPS == 0
+        ):
+            ara_kayit_yolu = (
+                f"{Config.CHECKPOINT_DIR}/mc_epoch_{epoch+1}_batch_{batch_idx+1}_lora"
+            )
+            model.save_pretrained(ara_kayit_yolu)
+            log(f"Ara checkpoint kaydedildi: {ara_kayit_yolu}")
 
     avg_loss = total_loss / max(len(dataloader), 1)
     avg_iou  = total_iou  / max(len(dataloader), 1)
