@@ -15,7 +15,8 @@ Proje bir capstone çalışmasıdır. Önceki tam eğitim koşusunda model 10 ep
 | Önceki tam eğitim | 10 epoch tamamlandı, metrikler `docs/05_FAZ4_EGITIM_RAPORU.md` içinde |
 | Güncel Kaggle koşusu | Yeniden üretim / entegrasyon checkpoint'i almak için kullanılıyor |
 | Ara checkpoint | Yeni koşularda her 500 batch'te LoRA checkpoint kaydediliyor |
-| Web entegrasyonu | Sıradaki iş: seçilen checkpoint'i backend inference hattına bağlamak |
+| Frontend | Web arayüzü hazır |
+| Model-web bağlantısı | Henüz tamamlanmadı; seçilen checkpoint'in backend inference hattına bağlanması gerekiyor |
 | Rapor | Önceki eğitim metrikleri korunacak, web demo ekran görüntüleri eklenecek |
 
 ## Teknik Özet
@@ -196,6 +197,12 @@ Inference için önce eğitilmiş bir LoRA checkpoint gereklidir. Teslim senaryo
 3. Eski checkpoint dosyaları bulunamıyorsa güncel Kaggle koşusundan `checkpoints/epoch_1_lora`
 4. Epoch tamamlanmadıysa son ara checkpoint, örn. `checkpoints/epoch_1_batch_6500_lora`
 
+## Web Entegrasyonu Durumu
+
+Frontend tarafı hazır durumdadır. Kullanıcı arayüzü, proje/demo akışını göstermek için kullanılabilir seviyededir. Ancak eğitilmiş SAM3 + LoRA checkpoint'inin web uygulamasına bağlanması henüz tamamlanmamıştır.
+
+Eksik olan ana parça, backend tarafında seçilen checkpoint'i yükleyen ve yüklenen görsel için segmentation mask üreten inference endpoint'idir. Bu nedenle mevcut durumda web arayüzü hazır kabul edilir, fakat model destekli canlı maske üretimi entegrasyon işi olarak devam etmektedir.
+
 ## Web Entegrasyonu İçin Minimum Hedef
 
 Web sitesine bağlanacak minimum AI akışı:
@@ -235,6 +242,8 @@ Rapor yazılırken mevcut duruma göre şu ifadeler kullanılmalıdır:
 - Önceki tam eğitim koşusunda 10 epoch tamamlanmıştır.
 - Raporlanan en iyi validation IoU yaklaşık `0.5798` seviyesindedir.
 - Önerilen eski checkpoint `epoch_4_lora` olarak kaydedilmiştir.
+- Frontend arayüzü hazırdır.
+- Eğitilmiş modelin frontend/backend akışına bağlanması henüz tamamlanmamıştır.
 - Güncel Kaggle koşuları, eski sonucu doğrulamak ve web entegrasyonu için kullanılabilir checkpoint üretmek amacıyla yürütülmektedir.
 - Yeni koşularda runtime kesintisi riskini azaltmak için her 500 batch'te ara checkpoint alınmaktadır.
 
