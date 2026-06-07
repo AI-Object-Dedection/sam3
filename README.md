@@ -2,7 +2,7 @@
 
 Bu proje, `facebook/sam3` modelini DACL10K köprü hasarı veri seti üzerinde LoRA ile fine-tune ederek hasarlı bölgeler için segmentation mask üretmeyi amaçlar.
 
-Proje bir capstone çalışmasıdır. Mevcut odak, modeli çalışır şekilde eğitmek, checkpoint almak, inference çıktısı üretmek ve bu çıktıyı web tabanlı prototipe bağlamaktır.
+Proje bir capstone çalışmasıdır. Önceki tam eğitim koşusunda model 10 epoch eğitilmiş ve metrikler `docs/05_FAZ4_EGITIM_RAPORU.md` altında raporlanmıştır. Mevcut odak, bu sonucu teslim akışına taşımak için checkpoint/inference çıktısını netleştirmek ve web tabanlı prototipe bağlamaktır.
 
 ## Güncel Durum
 
@@ -12,10 +12,11 @@ Proje bir capstone çalışmasıdır. Mevcut odak, modeli çalışır şekilde e
 | DACL10K veri okuyucu | `.npy` ve DatasetNinja `.jpg + .json` formatlarını destekliyor |
 | SAM3 yükleme | Kaggle T4 için `fp16` ve `low_cpu_mem_usage=True` ile çalışıyor |
 | LoRA entegrasyonu | Tamamlandı |
-| Eğitim | Kaggle üzerinde çalışıyor, 1 full epoch hedefleniyor |
-| Ara checkpoint | Her 500 batch'te LoRA checkpoint kaydediliyor |
-| Web entegrasyonu | Sıradaki iş: eğitilmiş checkpoint'i backend inference hattına bağlamak |
-| Rapor | Gerçek eğitim metrikleri ve demo ekran görüntüleri ile güncellenecek |
+| Önceki tam eğitim | 10 epoch tamamlandı, metrikler `docs/05_FAZ4_EGITIM_RAPORU.md` içinde |
+| Güncel Kaggle koşusu | Yeniden üretim / entegrasyon checkpoint'i almak için kullanılıyor |
+| Ara checkpoint | Yeni koşularda her 500 batch'te LoRA checkpoint kaydediliyor |
+| Web entegrasyonu | Sıradaki iş: seçilen checkpoint'i backend inference hattına bağlamak |
+| Rapor | Önceki eğitim metrikleri korunacak, web demo ekran görüntüleri eklenecek |
 
 ## Teknik Özet
 
@@ -33,16 +34,27 @@ Proje bir capstone çalışmasıdır. Mevcut odak, modeli çalışır şekilde e
 
 ## Gerçekçi Eğitim Planı
 
-Kaggle T4 üzerinde ölçülen hız yaklaşık `3.9 sn / batch` seviyesindedir.
+Önceki tam eğitim RTX 4090 Laptop üzerinde yaklaşık 21.5 saatte tamamlandı. Bu koşuda 6935 eğitim görseli, 975 validation görseli ve 10 epoch kullanıldı.
+
+Önceki tam eğitimden raporlanan ana sonuçlar:
+
+| Metrik | Değer |
+|---|---:|
+| Son train loss | 0.1743 |
+| Son train IoU | 0.6949 |
+| En iyi validation IoU civarı | 0.5798 |
+| Önerilen checkpoint | `checkpoints/epoch_4_lora` |
+
+Kaggle T4 üzerinde yeniden üretim/entegrasyon koşusunda ölçülen hız yaklaşık `3.9 sn / batch` seviyesindedir.
 
 | Koşu | Tahmini süre | Kullanım amacı |
 |---|---:|---|
 | 1000 train + 200 val, 2 epoch | 2.5-3 saat | Hızlı test |
 | Full train + full val, 1 epoch | 8.5-9 saat | Teslim için minimum model |
 | Full train + full val, 2 epoch | 17-18 saat | Daha iyi checkpoint adayı |
-| 10 epoch | 85-90 saat | Kaggle T4 için pratik değil |
+| 10 epoch | 85-90 saat | Kaggle T4 için pratik değil; önceki tam eğitim sonucu kullanılmalı |
 
-Teslim için önerilen hedef: önce `1 full epoch` tamamlamak, checkpoint almak, örnek inference üretmek ve web sitesine bağlamak. Zaman kalırsa 2. epoch denenebilir.
+Teslim için önerilen hedef: önceki 10 epoch sonucunu ana model sonucu olarak kullanmak; Kaggle'daki 1 epoch koşusunu ise yeniden üretim, checkpoint doğrulama ve web entegrasyonu için kullanmak. Eğer eski `epoch_4_lora` checkpoint dosyası eldeyse web entegrasyonunda öncelikli olarak o kullanılmalıdır.
 
 ## Klasör Yapısı
 
@@ -179,8 +191,10 @@ python scripts/run_infer.py
 
 Inference için önce eğitilmiş bir LoRA checkpoint gereklidir. Teslim senaryosunda önerilen checkpoint sırası:
 
-1. `checkpoints/epoch_1_lora`
-2. Eğer epoch tamamlanmadıysa son ara checkpoint, örn. `checkpoints/epoch_1_batch_6500_lora`
+1. Önceki tam eğitimden gelen `checkpoints/epoch_4_lora`
+2. Eğer `epoch_4_lora` elde değilse `checkpoints/epoch_5_lora`
+3. Eski checkpoint dosyaları bulunamıyorsa güncel Kaggle koşusundan `checkpoints/epoch_1_lora`
+4. Epoch tamamlanmadıysa son ara checkpoint, örn. `checkpoints/epoch_1_batch_6500_lora`
 
 ## Web Entegrasyonu İçin Minimum Hedef
 
@@ -218,14 +232,15 @@ image file
 Rapor yazılırken mevcut duruma göre şu ifadeler kullanılmalıdır:
 
 - Model, DACL10K üzerinde LoRA ile fine-tune edilmiştir.
-- Kaggle T4 ortamında eğitim süresi nedeniyle 1 full epoch teslim hedefi olarak belirlenmiştir.
-- Eğitim sırasında runtime kesintisi riskini azaltmak için her 500 batch'te ara checkpoint alınmıştır.
-- Son model checkpoint'i inference ve web demo için kullanılacaktır.
+- Önceki tam eğitim koşusunda 10 epoch tamamlanmıştır.
+- Raporlanan en iyi validation IoU yaklaşık `0.5798` seviyesindedir.
+- Önerilen eski checkpoint `epoch_4_lora` olarak kaydedilmiştir.
+- Güncel Kaggle koşuları, eski sonucu doğrulamak ve web entegrasyonu için kullanılabilir checkpoint üretmek amacıyla yürütülmektedir.
+- Yeni koşularda runtime kesintisi riskini azaltmak için her 500 batch'te ara checkpoint alınmaktadır.
 
-Şu ifadeler ancak gerçekten tamamlandıysa kullanılmalıdır:
+Şu ifadeler ancak dosya/çıktı gerçekten eldeyse kullanılmalıdır:
 
-- “10 epoch eğitim tamamlandı.”
-- “epoch_4_lora en iyi checkpoint olarak seçildi.”
+- “Web demosu eğitilmiş checkpoint ile canlı maske üretmektedir.”
 - “Web entegrasyonu tamamen tamamlandı.”
 
 ## Ekip
