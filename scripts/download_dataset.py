@@ -22,6 +22,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src.config import Config
 from src.utils import log, ensure_dir
 
 
@@ -39,7 +40,9 @@ def main():
         return
 
     # 2. Hedef klasörleri oluştur
-    base_dir = "data/dacl10k"
+    # NOT: Config.DATA_DIR kullanılır — Colab'da SAM3_DATA_DIR ile
+    # Drive'daki bir klasöre yönlendirilebilir (kod değiştirmeden)
+    base_dir = Config.DATA_DIR.rstrip("/")
     for split in ["train", "validation"]:
         ensure_dir(os.path.join(base_dir, "annotations", split))
         ensure_dir(os.path.join(base_dir, "images", split))
