@@ -31,7 +31,7 @@ from src.config import Config
 from src.dataset import DACL10K_CLASSES
 from src.evaluate import calculate_iou
 from src.losses import build_loss_fn
-from src.utils import log, ensure_dir
+from src.utils import log, ensure_dir, load_training_state, save_training_state
 
 
 def _create_scheduler(optimizer, steps_per_epoch):
@@ -188,9 +188,31 @@ def train(model, train_dataloader, val_dataloader=None):
 
     best_val_loss = float("inf")
     no_improvement_epochs = 0
+    start_epoch = 0
+
+    # ---- Kaldığı yerden devam (resume) ----
+    # Önceki bir eğitim varsa durumunu oku ve kaldığı epoch'tan devam et.
+    # (Model ağırlıkları zaten load_or_apply_lora ile yüklendi; burada
+    #  sadece epoch sayacı ve en iyi loss bilgisini geri yüklüyoruz.)
+    state = load_training_state(Config.CHECKPOINT_DIR)
+    if state is not None:
+        start_epoch = state.get("last_epoch", 0)
+        best_val_loss = state.get("best_val_loss", float("inf"))
+        no_improvement_epochs = state.get("no_improvement_epochs", 0)
+        log(f"Devam ediliyor: epoch {start_epoch}/{Config.NUM_EPOCHS} "
+            f"(en iyi val_loss: {best_val_loss:.4f})")
+
+        # LR scheduler'ı kaldığımız noktaya getir (geçen adımları ilerlet)
+        if scheduler is not None and start_epoch > 0:
+            for _ in range(start_epoch * len(train_dataloader)):
+                scheduler.step()
+
+    if start_epoch >= Config.NUM_EPOCHS:
+        log("Eğitim zaten tamamlanmış (tüm epoch'lar bitti). Yeni epoch yok.")
+        return
 
     # Her epoch için eğitim yap
-    for epoch in range(Config.NUM_EPOCHS):
+    for epoch in range(start_epoch, Config.NUM_EPOCHS):
         log(f"\n{'='*50}")
         log(f"Epoch {epoch+1}/{Config.NUM_EPOCHS} başladı")
 
@@ -219,6 +241,12 @@ def train(model, train_dataloader, val_dataloader=None):
 
                 if Config.EARLY_STOPPING and no_improvement_epochs >= Config.EARLY_STOPPING_PATIENCE:
                     log("Early stopping tetiklendi. Egitim durduruluyor.")
+                    # Eğitim erken bitti — tamamlandı say (tekrar çalıştırınca devam etmesin)
+                    save_training_state(Config.CHECKPOINT_DIR, {
+                        "last_epoch": Config.NUM_EPOCHS,
+                        "best_val_loss": best_val_loss,
+                        "no_improvement_epochs": no_improvement_epochs,
+                    })
                     break
 
         # Checkpoint kaydet — sadece LoRA adapter ağırlıklarını kaydet
@@ -226,6 +254,13 @@ def train(model, train_dataloader, val_dataloader=None):
         adapter_path = f"{Config.CHECKPOINT_DIR}/epoch_{epoch+1}_lora"
         model.save_pretrained(adapter_path)
         log(f"LoRA adapter kaydedildi: {adapter_path}")
+
+        # Eğitim durumunu kaydet — kesilirse buradan devam edilir
+        save_training_state(Config.CHECKPOINT_DIR, {
+            "last_epoch": epoch + 1,
+            "best_val_loss": best_val_loss,
+            "no_improvement_epochs": no_improvement_epochs,
+        })
 
     log(f"\n{'='*50}")
     log("Eğitim tamamlandı!")

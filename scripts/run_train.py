@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader  # noqa: E402
 from src.config import Config  # noqa: E402
 from src.utils import set_seed, log  # noqa: E402
 from src.model import load_model, load_processor  # noqa: E402
-from src.lora import apply_lora  # noqa: E402
+from src.lora import load_or_apply_lora  # noqa: E402
 from src.dataset import DACL10KDataset  # noqa: E402
 from src.train import train  # noqa: E402
 
@@ -41,8 +41,8 @@ def main():
     model = load_model()
     processor = load_processor()
 
-    # 3. LoRA uygula — sadece küçük ek katmanları eğiteceğiz
-    model = apply_lora(model)
+    # 3. LoRA uygula — önceki checkpoint varsa üstüne devam, yoksa sıfırdan
+    model = load_or_apply_lora(model)
 
     # 4. Dataset oluştur
     log("Dataset hazırlanıyor...")

@@ -21,10 +21,12 @@ HuggingFace'in "Parameter-Efficient Fine-Tuning" kütüphanesi.
 LoRA ve benzeri yöntemleri kolayca uygulamayı sağlar.
 """
 
-from peft import LoraConfig, get_peft_model
+import os
+
+from peft import LoraConfig, PeftModel, get_peft_model
 
 from src.config import Config
-from src.utils import log
+from src.utils import load_training_state, log
 
 
 def apply_lora(model):
@@ -59,6 +61,54 @@ def apply_lora(model):
     print_trainable_params(model)
 
     return model
+
+
+def _resume_checkpoint_path():
+    """
+    Devam edilebilecek son checkpoint'in yolunu bulur.
+
+    Eğitim durumu dosyasındaki (training_state.json) `last_epoch` bilgisine
+    bakar ve ona karşılık gelen `epoch_{N}_lora` klasörünü arar.
+
+    Returns:
+        str: Checkpoint klasörünün yolu. Devam edilecek bir şey yoksa None.
+    """
+    state = load_training_state(Config.CHECKPOINT_DIR)
+    if state is None:
+        return None
+
+    last_epoch = state.get("last_epoch", 0)
+    if last_epoch <= 0:
+        return None
+
+    path = os.path.join(Config.CHECKPOINT_DIR, f"epoch_{last_epoch}_lora")
+    return path if os.path.isdir(path) else None
+
+
+def load_or_apply_lora(model):
+    """
+    Önceki bir checkpoint varsa onun üzerine devam eder, yoksa sıfırdan LoRA uygular.
+
+    Bu fonksiyon sayesinde eğitim yarıda kesilse bile (oturum kapanması,
+    bağlantı kopması) tekrar çalıştırıldığında kaldığı yerden devam eder —
+    her seferinde sıfırdan başlamaz.
+
+    Args:
+        model: Base SAM3 modeli (henüz LoRA uygulanmamış)
+
+    Returns:
+        model: LoRA'lı model — ya önceki ağırlıklarla ya da sıfırdan
+    """
+    ckpt = _resume_checkpoint_path()
+    if ckpt is not None:
+        log(f"Önceki checkpoint bulundu, ÜSTÜNE DEVAM ediliyor: {ckpt}")
+        # is_trainable=True → yüklenen LoRA katmanları yine eğitilebilir kalır
+        model = PeftModel.from_pretrained(model, ckpt, is_trainable=True)
+        print_trainable_params(model)
+        return model
+
+    log("Önceki checkpoint yok — LoRA sıfırdan başlatılıyor.")
+    return apply_lora(model)
 
 
 def print_trainable_params(model):
