@@ -25,6 +25,14 @@ def _env_int(name, default):
     return int(value)
 
 
+def _env_str(name, default):
+    """Ortam degiskeninden metin ayar okur (Colab/Drive yollari icin)."""
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return default
+    return value
+
+
 def _env_optional_int(name, default):
     """Bos birakilirsa None/default, doluysa integer ayar okur."""
     value = os.environ.get(name)
@@ -44,11 +52,15 @@ class Config:
     # ---- Dataset Ayarları ----
     # NOT: Kaggle versiyonu numpy (.npy) formatında
     # Görseller: (512, 512, 3) uint8 | Mask'lar: (512, 512, 19) uint8
-    DATA_DIR = "data/dacl10k/"                             # DACL10K ana klasörü
-    TRAIN_MASKS = "data/dacl10k/annotations/train/"        # Eğitim mask'ları (.npy, 512x512x19)
-    VAL_MASKS = "data/dacl10k/annotations/validation/"     # Validation mask'ları (.npy)
-    TRAIN_IMAGES = "data/dacl10k/images/train/"            # Eğitim görselleri (.npy, 512x512x3)
-    VAL_IMAGES = "data/dacl10k/images/validation/"         # Validation görselleri (.npy)
+    # NOT: Colab'da bu yollar Drive'daki veri setini gosterecek sekilde
+    # SAM3_DATA_DIR ortam degiskeni ile degistirilebilir (kodu degistirmeye gerek yok)
+    DATA_DIR = _env_str("SAM3_DATA_DIR", "data/dacl10k/")
+    if not DATA_DIR.endswith("/"):
+        DATA_DIR += "/"
+    TRAIN_MASKS = f"{DATA_DIR}annotations/train/"          # Eğitim mask'ları
+    VAL_MASKS = f"{DATA_DIR}annotations/validation/"       # Validation mask'ları
+    TRAIN_IMAGES = f"{DATA_DIR}images/train/"              # Eğitim görselleri
+    VAL_IMAGES = f"{DATA_DIR}images/validation/"           # Validation görselleri
 
     # ---- Eğitim Ayarları ----
     BATCH_SIZE = 1         # Bir seferde kaç görsel işleneceği
@@ -110,8 +122,11 @@ class Config:
     LORA_DROPOUT = 0.1     # LoRA dropout oranı
 
     # ---- Klasör Ayarları ----
-    CHECKPOINT_DIR = "checkpoints/"  # Model ağırlıklarının kaydedileceği yer
-    OUTPUT_DIR = "outputs/"          # Çıktıların kaydedileceği yer
+    # NOT: Colab'da checkpointlerin Drive'a kaydedilmesi icin
+    # SAM3_CHECKPOINT_DIR ortam degiskeni kullanilabilir
+    # (Kaggle/connection kopmasinda checkpoint kaybolmamasi icin)
+    CHECKPOINT_DIR = _env_str("SAM3_CHECKPOINT_DIR", "checkpoints/")
+    OUTPUT_DIR = _env_str("SAM3_OUTPUT_DIR", "outputs/")
 
     # ---- Cihaz Ayarı ----
     # GPU varsa GPU kullan, yoksa CPU kullan
