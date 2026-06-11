@@ -67,8 +67,14 @@ def _resume_checkpoint_path():
     """
     Devam edilebilecek son checkpoint'in yolunu bulur.
 
-    Eğitim durumu dosyasındaki (training_state.json) `last_epoch` bilgisine
-    bakar ve ona karşılık gelen `epoch_{N}_lora` klasörünü arar.
+    Eğitim durumu dosyasında (training_state.json) kayıtlı `latest_ckpt`
+    alanına bakar. Bu alan, en son yazılan checkpoint klasörünün adını tutar —
+    bu bir epoch sonu checkpoint'i (`epoch_3_lora`) olabilir, ya da epoch
+    ortasında alınmış bir ara checkpoint (`epoch_3_batch_2000_lora`) olabilir.
+    Böylece eğitim epoch ortasında kesilse bile en son ara checkpoint'ten devam eder.
+
+    Eski formatlı (yalnızca `last_epoch` içeren) state dosyaları için geriye
+    dönük uyumluluk olarak `epoch_{N}_lora` klasörüne düşer.
 
     Returns:
         str: Checkpoint klasörünün yolu. Devam edilecek bir şey yoksa None.
@@ -77,7 +83,15 @@ def _resume_checkpoint_path():
     if state is None:
         return None
 
-    last_epoch = state.get("last_epoch", 0)
+    # Yeni format: en son yazılan checkpoint'in adı doğrudan kayıtlı.
+    latest = state.get("latest_ckpt")
+    if latest:
+        path = os.path.join(Config.CHECKPOINT_DIR, latest)
+        if os.path.isdir(path):
+            return path
+
+    # Eski format (geriye dönük uyumluluk): epoch sonu checkpoint'i.
+    last_epoch = state.get("completed_epochs", state.get("last_epoch", 0))
     if last_epoch <= 0:
         return None
 

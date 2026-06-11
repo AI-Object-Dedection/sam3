@@ -24,6 +24,9 @@ SAM3 akışı (tam pipeline):
 
 import random
 import math
+import os
+import glob
+import shutil
 
 import torch
 
@@ -32,6 +35,29 @@ from src.dataset import DACL10K_CLASSES
 from src.evaluate import calculate_iou
 from src.losses import build_loss_fn
 from src.utils import log, ensure_dir, load_training_state, save_training_state
+
+
+def _prune_batch_checkpoints(checkpoint_dir, epoch_num, keep=None):
+    """
+    Bir epoch'a ait ara (batch) checkpoint klasörlerini siler.
+
+    Neden? Ara checkpoint'ler (`epoch_N_batch_M_lora`) her 500 adımda birikir.
+    Hepsi Drive'a kopyalanırsa hem yer dolar hem yedekleme yavaşlar. En son
+    ihtiyacımız olan checkpoint kaydedildikten sonra eskileri temizleriz.
+
+    Args:
+        checkpoint_dir: Checkpoint klasörü
+        epoch_num: Hangi epoch'un ara checkpoint'leri (1-tabanlı, ör: 3)
+        keep: Silinmeyecek klasörün tam yolu (en yenisini koru), yoksa hepsini sil
+    """
+    desen = os.path.join(checkpoint_dir, f"epoch_{epoch_num}_batch_*_lora")
+    for yol in glob.glob(desen):
+        if keep is not None and os.path.abspath(yol) == os.path.abspath(keep):
+            continue
+        try:
+            shutil.rmtree(yol)
+        except OSError:
+            pass  # Silinemezse sorun değil, sadece yer kaplar
 
 
 def _create_scheduler(optimizer, steps_per_epoch):
@@ -69,17 +95,24 @@ def _create_scheduler(optimizer, steps_per_epoch):
     raise ValueError("Config.LR_SCHEDULER gecersiz. Beklenen: none, cosine_warmup, onecycle")
 
 
-def train_one_epoch(model, dataloader, optimizer, scheduler, loss_fn, scaler, epoch):
+def train_one_epoch(model, dataloader, optimizer, scheduler, loss_fn, scaler, epoch,
+                    skip_steps=0, on_checkpoint=None):
     """
     Modeli tek bir epoch boyunca eğitir.
 
     Args:
-        model:      Eğitilecek model (LoRA uygulanmış)
-        dataloader: Eğitim verisi (batch'ler halinde)
-        optimizer:  Parametre güncelleyici (AdamW)
-        loss_fn:    Kayıp fonksiyonu (BCEWithLogitsLoss)
-        scaler:     Mixed precision için GradScaler
-        epoch:      Kaçıncı epoch olduğu (log için)
+        model:       Eğitilecek model (LoRA uygulanmış)
+        dataloader:  Eğitim verisi (batch'ler halinde)
+        optimizer:   Parametre güncelleyici (AdamW)
+        loss_fn:     Kayıp fonksiyonu (BCEWithLogitsLoss)
+        scaler:      Mixed precision için GradScaler
+        epoch:       Kaçıncı epoch olduğu (log için)
+        skip_steps:  Bu epoch'ta atlanacak batch sayısı. Eğitim epoch ortasında
+                     kesilip devam ettiğinde, daha önce işlenen batch'leri tekrar
+                     işlememek için baştan bu kadarı atlanır (GPU'ya hiç verilmez).
+        on_checkpoint: Ara checkpoint alındığında çağrılan fonksiyon.
+                     İmza: on_checkpoint(resume_step, latest_ckpt_adi). Eğitim
+                     durumunu (kaçıncı adımda olduğumuzu) Drive'a kaydetmek için.
 
     Returns:
         tuple: (ortalama_loss, ortalama_iou)
@@ -87,8 +120,17 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, loss_fn, scaler, ep
     model.train()  # Modeli eğitim moduna al
     total_loss = 0.0
     total_iou = 0.0
+    trained_batches = 0          # Gerçekten eğitilen batch sayısı (atlananlar hariç)
+    prev_batch_ckpt = None       # En son alınan ara checkpoint (eskisini silmek için)
+
+    if skip_steps > 0:
+        log(f"Devam: bu epoch'ta ilk {skip_steps} batch atlanıyor (zaten işlenmişti).")
 
     for batch_idx, batch in enumerate(dataloader):
+        # Devam ederken: daha önce işlenmiş batch'leri atla (GPU işlemi yapma)
+        if batch_idx < skip_steps:
+            continue
+
         # Batch içindeki tensor'ları GPU'ya taşı
         pixel_values = batch["pixel_values"].to(Config.DEVICE)
         input_ids = batch["input_ids"].to(Config.DEVICE)
@@ -125,6 +167,7 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, loss_fn, scaler, ep
         iou = calculate_iou(pred_mask.detach(), gt_mask)
         total_loss += loss.item()
         total_iou += iou
+        trained_batches += 1
 
         # Her 10 batch'te bir durum bilgisi yazdır
         if (batch_idx + 1) % 10 == 0:
@@ -136,14 +179,27 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, loss_fn, scaler, ep
             Config.CHECKPOINT_EVERY_STEPS > 0
             and (batch_idx + 1) % Config.CHECKPOINT_EVERY_STEPS == 0
         ):
-            ara_kayit_yolu = (
-                f"{Config.CHECKPOINT_DIR}/epoch_{epoch+1}_batch_{batch_idx+1}_lora"
-            )
+            ckpt_adi = f"epoch_{epoch+1}_batch_{batch_idx+1}_lora"
+            ara_kayit_yolu = os.path.join(Config.CHECKPOINT_DIR, ckpt_adi)
             model.save_pretrained(ara_kayit_yolu)
             log(f"Ara checkpoint kaydedildi: {ara_kayit_yolu}")
 
-    avg_loss = total_loss / max(len(dataloader), 1)
-    avg_iou = total_iou / max(len(dataloader), 1)
+            # Eğitim durumunu kaydet — epoch ortasında kesilirse buradan devam edilir.
+            # resume_step = işlenen toplam batch (atlananlar + bu turdakiler).
+            if on_checkpoint is not None:
+                on_checkpoint(batch_idx + 1, ckpt_adi)
+
+            # Bir önceki ara checkpoint'i sil — sadece en yenisini tut (yer/yedekleme)
+            if prev_batch_ckpt is not None:
+                try:
+                    shutil.rmtree(prev_batch_ckpt)
+                except OSError:
+                    pass
+            prev_batch_ckpt = ara_kayit_yolu
+
+    # Ortalamalar: yalnızca gerçekten eğitilen batch'lere böl (atlananlar hariç)
+    avg_loss = total_loss / max(trained_batches, 1)
+    avg_iou = total_iou / max(trained_batches, 1)
     return avg_loss, avg_iou
 
 
@@ -189,22 +245,26 @@ def train(model, train_dataloader, val_dataloader=None):
     best_val_loss = float("inf")
     no_improvement_epochs = 0
     start_epoch = 0
+    resume_step = 0   # Başlanacak epoch'ta atlanacak batch sayısı (epoch ortası devam)
 
     # ---- Kaldığı yerden devam (resume) ----
-    # Önceki bir eğitim varsa durumunu oku ve kaldığı epoch'tan devam et.
+    # Önceki bir eğitim varsa durumunu oku ve kaldığı yerden devam et.
     # (Model ağırlıkları zaten load_or_apply_lora ile yüklendi; burada
-    #  sadece epoch sayacı ve en iyi loss bilgisini geri yüklüyoruz.)
+    #  epoch sayacı, en iyi loss VE epoch içindeki adım bilgisini geri yüklüyoruz.)
     state = load_training_state(Config.CHECKPOINT_DIR)
     if state is not None:
-        start_epoch = state.get("last_epoch", 0)
+        # Yeni format: completed_epochs + resume_step. Eski format: last_epoch.
+        start_epoch = state.get("completed_epochs", state.get("last_epoch", 0))
+        resume_step = state.get("resume_step", 0)
         best_val_loss = state.get("best_val_loss", float("inf"))
         no_improvement_epochs = state.get("no_improvement_epochs", 0)
-        log(f"Devam ediliyor: epoch {start_epoch}/{Config.NUM_EPOCHS} "
-            f"(en iyi val_loss: {best_val_loss:.4f})")
+        log(f"Devam ediliyor: epoch {start_epoch}/{Config.NUM_EPOCHS}, "
+            f"epoch içi adım {resume_step} (en iyi val_loss: {best_val_loss:.4f})")
 
-        # LR scheduler'ı kaldığımız noktaya getir (geçen adımları ilerlet)
-        if scheduler is not None and start_epoch > 0:
-            for _ in range(start_epoch * len(train_dataloader)):
+        # LR scheduler'ı kaldığımız noktaya getir (tamamlanan epoch'lar + epoch içi adımlar)
+        if scheduler is not None:
+            gecen_adim = start_epoch * len(train_dataloader) + resume_step
+            for _ in range(gecen_adim):
                 scheduler.step()
 
     if start_epoch >= Config.NUM_EPOCHS:
@@ -216,9 +276,25 @@ def train(model, train_dataloader, val_dataloader=None):
         log(f"\n{'='*50}")
         log(f"Epoch {epoch+1}/{Config.NUM_EPOCHS} başladı")
 
+        # Yalnızca devam edilen (ilk) epoch'ta batch atla; sonraki epoch'lar baştan.
+        skip_steps = resume_step if epoch == start_epoch else 0
+
+        # Ara checkpoint alındığında epoch içi durumu kaydeden fonksiyon.
+        # epoch/best_val_loss bu döngü turunda sabit; mid-epoch state için yeterli.
+        def _ara_durum_kaydet(adim, ckpt_adi, _epoch=epoch):
+            save_training_state(Config.CHECKPOINT_DIR, {
+                "completed_epochs": _epoch,        # bu epoch henüz bitmedi
+                "resume_step": adim,               # bu epoch'ta işlenen batch sayısı
+                "latest_ckpt": ckpt_adi,           # yüklenecek en son checkpoint
+                "last_epoch": _epoch,              # eski format/notebook gösterimi için
+                "best_val_loss": best_val_loss,
+                "no_improvement_epochs": no_improvement_epochs,
+            })
+
         # Eğitim
         train_loss, train_iou = train_one_epoch(
-            model, train_dataloader, optimizer, scheduler, loss_fn, scaler, epoch
+            model, train_dataloader, optimizer, scheduler, loss_fn, scaler, epoch,
+            skip_steps=skip_steps, on_checkpoint=_ara_durum_kaydet,
         )
         log(f"Epoch {epoch+1} [train] | Loss: {train_loss:.4f} | IoU: {train_iou:.4f}")
 
@@ -243,24 +319,36 @@ def train(model, train_dataloader, val_dataloader=None):
                     log("Early stopping tetiklendi. Egitim durduruluyor.")
                     # Eğitim erken bitti — tamamlandı say (tekrar çalıştırınca devam etmesin)
                     save_training_state(Config.CHECKPOINT_DIR, {
+                        "completed_epochs": Config.NUM_EPOCHS,
+                        "resume_step": 0,
+                        "latest_ckpt": f"epoch_{epoch+1}_lora",
                         "last_epoch": Config.NUM_EPOCHS,
                         "best_val_loss": best_val_loss,
                         "no_improvement_epochs": no_improvement_epochs,
                     })
+                    _prune_batch_checkpoints(Config.CHECKPOINT_DIR, epoch + 1)
                     break
 
         # Checkpoint kaydet — sadece LoRA adapter ağırlıklarını kaydet
         # (base model HuggingFace'ten yüklenebilir, sadece öğrenilen kısım kaydedilir)
-        adapter_path = f"{Config.CHECKPOINT_DIR}/epoch_{epoch+1}_lora"
+        adapter_adi = f"epoch_{epoch+1}_lora"
+        adapter_path = os.path.join(Config.CHECKPOINT_DIR, adapter_adi)
         model.save_pretrained(adapter_path)
         log(f"LoRA adapter kaydedildi: {adapter_path}")
 
-        # Eğitim durumunu kaydet — kesilirse buradan devam edilir
+        # Eğitim durumunu kaydet — kesilirse buradan devam edilir.
+        # epoch tamamlandı: completed_epochs = epoch+1, resume_step = 0 (sonraki epoch baştan).
         save_training_state(Config.CHECKPOINT_DIR, {
+            "completed_epochs": epoch + 1,
+            "resume_step": 0,
+            "latest_ckpt": adapter_adi,
             "last_epoch": epoch + 1,
             "best_val_loss": best_val_loss,
             "no_improvement_epochs": no_improvement_epochs,
         })
+
+        # Bu epoch'un ara checkpoint'leri artık gereksiz (epoch sonu checkpoint var)
+        _prune_batch_checkpoints(Config.CHECKPOINT_DIR, epoch + 1)
 
     log(f"\n{'='*50}")
     log("Eğitim tamamlandı!")

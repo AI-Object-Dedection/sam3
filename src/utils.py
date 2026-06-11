@@ -91,8 +91,14 @@ def save_training_state(checkpoint_dir, state):
     """
     ensure_dir(checkpoint_dir)
     path = os.path.join(checkpoint_dir, TRAINING_STATE_FILE)
-    with open(path, "w", encoding="utf-8") as f:
+    # Atomik yazım: önce geçici dosyaya yaz, sonra yerine taşı.
+    # Neden? Drive yedekleme döngüsü (her 120 sn) tam bu dosyayı kopyalarken
+    # yazma yarıda kalırsa dosya bozulur ve resume "kayıt yok" sanır.
+    # Geçici dosya + os.replace ile dosya ya eski ya yeni halde kalır, asla yarım.
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(state, f)
+    os.replace(tmp_path, path)
 
 
 def load_training_state(checkpoint_dir):
