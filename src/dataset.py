@@ -277,12 +277,45 @@ class DACL10KDataset(Dataset):
         ])
         return npy_files
 
+    def _v1_to_v2_isim(self, temel_ad):
+        """
+        v1 görsel adını v2 annotation adına çevirir.
+
+        Neden gerekli: görseller eski isimlendirme (v1) ile yüklendi,
+        annotation'lar yeni isimlendirme (v2) ile geliyor.
+
+        Örnekler:
+            dacl10k_train_00000      → dacl10k_v2_train_0000
+            dacl10k_validation_00000 → dacl10k_v2_validation_0000
+        """
+        import re
+        eslesme = re.match(r"dacl10k_(train|validation)_(\d+)$", temel_ad)
+        if eslesme:
+            kategori = eslesme.group(1)   # "train" veya "validation"
+            num = int(eslesme.group(2))   # sayısal kısım (5 basamak → int → 4 basamak)
+            return f"dacl10k_v2_{kategori}_{num:04d}"
+        return None
+
     def _dosya_bul(self, klasor, temel_ad, uzantilar):
-        """Verilen temel ada ait ilk mevcut dosya yolunu bulur."""
+        """
+        Verilen temel ada ait ilk mevcut dosya yolunu bulur.
+
+        Önce verilen adı dener. Bulamazsa v1→v2 dönüşümü yaparak tekrar dener.
+        Bu sayede v1 isimli görseller (dacl10k_train_00000.jpg) ile
+        v2 isimli annotation'lar (dacl10k_v2_train_0000.json) eşleşebilir.
+        """
+        # Önce direkt dene
         for uzanti in uzantilar:
             dosya_yolu = os.path.join(klasor, temel_ad + uzanti)
             if os.path.exists(dosya_yolu):
                 return dosya_yolu
+        # Bulunamadıysa v1→v2 dönüşümünü dene
+        v2_ad = self._v1_to_v2_isim(temel_ad)
+        if v2_ad:
+            for uzanti in uzantilar:
+                dosya_yolu = os.path.join(klasor, v2_ad + uzanti)
+                if os.path.exists(dosya_yolu):
+                    return dosya_yolu
         return None
 
     def __len__(self):
