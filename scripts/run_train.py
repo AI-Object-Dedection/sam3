@@ -69,12 +69,20 @@ def main():
     )
 
     # 5. DataLoader oluştur — veriyi batch'ler halinde modele sunar
+    # num_workers: paralel veri yükleme işçisi. Colab/Linux'ta GPU'yu beslemek için
+    # Config.NUM_WORKERS (varsayılan 4). 0 olursa veri yükleme GPU'yu bekletir → çok yavaş.
+    # persistent_workers: işçiler epoch'lar arası ayakta kalır → her epoch başında
+    # yeniden kurulum maliyeti olmaz (yalnızca num_workers > 0 ise anlamlı).
+    num_workers = Config.NUM_WORKERS
+    persistent = num_workers > 0
+
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=Config.BATCH_SIZE,
         shuffle=True,        # Her epoch'ta veriyi karıştır
         pin_memory=True,     # GPU'ya veri aktarımını hızlandırır
-        num_workers=0,       # Windows'ta 0 bırak (çoklu process sorun çıkarır)
+        num_workers=num_workers,
+        persistent_workers=persistent,
     )
 
     val_dataloader = DataLoader(
@@ -82,8 +90,11 @@ def main():
         batch_size=Config.BATCH_SIZE,
         shuffle=False,
         pin_memory=True,
-        num_workers=0,
+        num_workers=num_workers,
+        persistent_workers=persistent,
     )
+
+    log(f"Veri yükleme işçisi (num_workers): {num_workers}")
 
     log(f"Eğitim batch sayısı    : {len(train_dataloader)}")
     log(f"Validation batch sayısı: {len(val_dataloader)}")

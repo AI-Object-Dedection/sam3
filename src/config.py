@@ -116,6 +116,11 @@ class Config:
     MAX_VAL_SAMPLES = _env_optional_int("MAX_VAL_SAMPLES", None)
     CHECKPOINT_EVERY_STEPS = _env_int("CHECKPOINT_EVERY_STEPS", 500)
 
+    # Veri yukleyici kac paralel isci kullansin (Colab/Linux'ta GPU'yu bekletmemek icin).
+    # 0 = veri yukleme GPU'yu bekletir (cok yavas). Colab A100 high-RAM icin 4 iyi.
+    # Windows'ta sorun cikarirsa SAM3_NUM_WORKERS=0 ile kapatilabilir.
+    NUM_WORKERS = _env_int("SAM3_NUM_WORKERS", 4)
+
     # ---- LoRA Ayarları ----
     LORA_RANK = 8          # LoRA'nın rank değeri (düşük = daha az parametre)
     LORA_ALPHA = 16        # LoRA'nın ölçekleme faktörü
