@@ -68,7 +68,10 @@ def log(message):
         message: Yazdırılacak mesaj
     """
     now = datetime.now().strftime("%H:%M:%S")
-    print(f"[{now}] {message}")
+    # flush=True: cikti dosyaya yonlendirildiginde (arka plan egitim) Python
+    # ciktiyi tamponda biriktirir; flush ile her satir ANINDA log dosyasina yazilir,
+    # boylece "Adim 7" ile ilerlemeyi gercek zamanli takip edebilirsin.
+    print(f"[{now}] {message}", flush=True)
 
 
 # Eğitim durumunu (kaçıncı epoch'tayız, en iyi loss vb.) tutan dosyanın adı.
