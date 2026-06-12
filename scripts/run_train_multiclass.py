@@ -14,12 +14,10 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from torch.utils.data import DataLoader  # noqa: E402
-from peft import PeftModel               # noqa: E402
-
 from src.config import Config            # noqa: E402
 from src.utils import set_seed, log      # noqa: E402
 from src.model import load_model, load_processor  # noqa: E402
-from src.lora import apply_lora          # noqa: E402
+from src.lora import load_or_apply_lora  # noqa: E402
 from src.dataset import DACL10KDataset  # noqa: E402
 from src.train import train_multiclass  # noqa: E402
 
@@ -36,16 +34,10 @@ def main():
     model     = load_model()
     processor = load_processor()
 
-    # 2. Onceki en iyi checkpoint'ten baslat (epoch_4_lora)
-    #    Sifirdan egitmek yerine mevcut bilgiyi kullan — cok daha hizli
-    onceki_checkpoint = "checkpoints/epoch_4_lora"
-    if os.path.exists(onceki_checkpoint):
-        log(f"Onceki checkpoint yukleniyor: {onceki_checkpoint}")
-        model = PeftModel.from_pretrained(model, onceki_checkpoint, is_trainable=True)
-        log("Checkpoint yuklendi — onceki bilgiden devam edilecek.")
-    else:
-        log("Onceki checkpoint bulunamadi — LoRA sifirdan uygulanacak.")
-        model = apply_lora(model)
+    # 2. LoRA uygula — kendi checkpoint klasöründe önceki multi-class ilerleme
+    #    varsa ÜSTÜNE DEVAM eder (training_state.json'a bakar), yoksa sıfırdan başlar.
+    #    Binary ile aynı resume mantığı; böylece session kopsa bile kaldığı yerden devam.
+    model = load_or_apply_lora(model)
 
     # 3. Dataset
     log("Dataset hazirlanıyor...")
@@ -66,13 +58,17 @@ def main():
         use_augmentation=False,
     )
 
+    # num_workers: Config.NUM_WORKERS (varsayılan 4) — GPU'yu veri beklemekten kurtarır
+    nw = Config.NUM_WORKERS
     train_dataloader = DataLoader(
         train_dataset, batch_size=Config.BATCH_SIZE,
-        shuffle=True, pin_memory=True, num_workers=0,
+        shuffle=True, pin_memory=True, num_workers=nw,
+        persistent_workers=(nw > 0),
     )
     val_dataloader = DataLoader(
         val_dataset, batch_size=Config.BATCH_SIZE,
-        shuffle=False, pin_memory=True, num_workers=0,
+        shuffle=False, pin_memory=True, num_workers=nw,
+        persistent_workers=(nw > 0),
     )
 
     log(f"Egitim batch: {len(train_dataloader)} | Val batch: {len(val_dataloader)}")
