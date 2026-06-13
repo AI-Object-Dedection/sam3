@@ -491,7 +491,9 @@ def train_multiclass(model, train_dataloader, val_dataloader, processor):
         val_dataloader:    Validation verisi
         processor:         Tokenizer için SAM3 Processor
     """
-    from src.evaluate import evaluate
+    # Multi-class'a ÖZEL validation: her görselde sınıf adlarıyla sorar
+    # (binary "damage" prompt'u ile değil). Yanlış erken durdurmayı önler.
+    from src.evaluate import evaluate_multiclass
 
     log("Multi-class eğitim başlıyor...")
     log(f"Epoch sayısı  : {Config.NUM_EPOCHS}")
@@ -564,7 +566,7 @@ def train_multiclass(model, train_dataloader, val_dataloader, processor):
         log(f"Epoch {epoch+1} [train] | Loss: {train_loss:.4f} | IoU: {train_iou:.4f}")
 
         if val_dataloader is not None:
-            results = evaluate(model, val_dataloader, loss_fn)
+            results = evaluate_multiclass(model, val_dataloader, processor, loss_fn)
             log(f"Epoch {epoch+1} [val]   | Loss: {results['mean_loss']:.4f} "
                 f"| IoU: {results['mean_iou']:.4f}")
 

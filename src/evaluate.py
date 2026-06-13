@@ -16,6 +16,7 @@ import numpy as np
 import torch
 
 from src.config import Config
+from src.dataset import DACL10K_CLASSES
 from src.losses import build_loss_fn
 from src.utils import log
 
@@ -96,6 +97,99 @@ def evaluate(model, dataloader, loss_fn=None):
 
     log(f"Validation tamamlandı | Loss: {mean_loss:.4f} | IoU: {mean_iou:.4f} "
         f"| Örnek sayısı: {len(iou_scores)}")
+
+    return {
+        "mean_iou"   : mean_iou,
+        "mean_loss"  : mean_loss,
+        "num_samples": len(iou_scores),
+    }
+
+
+def evaluate_multiclass(model, dataloader, processor, loss_fn=None):
+    """
+    Multi-class modeli validation verisinde DOĞRU şekilde değerlendirir.
+
+    NEDEN AYRI BİR FONKSİYON?
+    Normal evaluate() her görsele "damage" metnini sorar ve binary mask ile
+    karşılaştırır. Ama multi-class model artık "damage" değil, sınıf adlarını
+    ("Crack", "Rust" vb.) öğrendi. Ona "damage" sormak yanlış soru sormaktır;
+    model doğru çalışsa bile IoU düşük/loss yüksek çıkar (yanlış erken durdurma).
+
+    Bu fonksiyon eğitimle AYNI mantığı kullanır:
+    - Her val görselinde annotation'ı olan (aktif) her sınıf için,
+    - O sınıfın adını metin ipucu olarak verir,
+    - O sınıfın maskı ile karşılaştırır.
+    Sonuç: gerçek multi-class başarısını ölçen anlamlı bir IoU/Loss.
+
+    Args:
+        model:      Değerlendirilecek model
+        dataloader: Validation verisi (batch_size=1 varsayılır)
+        processor:  SAM3 Processor (sınıf adlarını tokenize etmek için)
+        loss_fn:    Kayıp fonksiyonu (opsiyonel)
+
+    Returns:
+        dict: {"mean_iou": float, "mean_loss": float, "num_samples": int}
+        num_samples burada (görsel, sınıf) çiftlerinin sayısıdır.
+    """
+    model.eval()
+
+    if loss_fn is None:
+        loss_fn = build_loss_fn()
+
+    # Tüm sınıf adlarını bir kez tokenize et (eğitimdeki ile birebir aynı)
+    sinif_tokenlar = {}
+    for sinif_adi in DACL10K_CLASSES:
+        token = processor.tokenizer(
+            sinif_adi, return_tensors="pt", padding=True, truncation=True
+        )
+        sinif_tokenlar[sinif_adi] = {
+            "input_ids"     : token["input_ids"],
+            "attention_mask": token["attention_mask"],
+        }
+
+    iou_scores = []
+    loss_scores = []
+
+    log("Multi-class validation başlıyor...")
+
+    with torch.no_grad():
+        for batch in dataloader:
+            pixel_values     = batch["pixel_values"].to(Config.DEVICE)
+            multi_class_mask = batch["multi_class_mask"].to(Config.DEVICE)  # (B, 19, 288, 288)
+
+            # Bu görselde hangi sınıfların annotation'ı var? (batch_size=1)
+            aktif_siniflar = [
+                i for i in range(len(DACL10K_CLASSES))
+                if multi_class_mask[0, i].sum() > 0
+            ]
+            if not aktif_siniflar:
+                continue  # Annotation yok — değerlendirilecek sınıf yok, atla
+
+            for sinif_idx in aktif_siniflar:
+                sinif_adi = DACL10K_CLASSES[sinif_idx]
+                tok = sinif_tokenlar[sinif_adi]
+                input_ids      = tok["input_ids"].to(Config.DEVICE)
+                attention_mask = tok["attention_mask"].to(Config.DEVICE)
+                gt_mask        = multi_class_mask[:, sinif_idx, :, :]  # (B, 288, 288)
+
+                with torch.amp.autocast("cuda", enabled=(Config.DEVICE == "cuda")):
+                    outputs = model(
+                        pixel_values=pixel_values,
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                    )
+                    pred_mask = outputs.semantic_seg.squeeze(1)
+                    loss = loss_fn(pred_mask, gt_mask)
+
+                iou = calculate_iou(pred_mask, gt_mask)
+                iou_scores.append(iou)
+                loss_scores.append(loss.item())
+
+    mean_iou = float(np.mean(iou_scores)) if iou_scores else 0.0
+    mean_loss = float(np.mean(loss_scores)) if loss_scores else 0.0
+
+    log(f"Multi-class validation tamamlandı | Loss: {mean_loss:.4f} | IoU: {mean_iou:.4f} "
+        f"| (gorsel,sinif) cifti: {len(iou_scores)}")
 
     return {
         "mean_iou"   : mean_iou,
